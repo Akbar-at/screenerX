@@ -162,7 +162,7 @@ class ResearchBot:
             except ValueError as exc: return messages(str(exc))
             scoped=bool(selections or command in defaults)
 
-            ticker,_=symbol_for(args[1]); bars=repository.bars(ticker)
+            ticker,_=symbol_for(args[1]); bars=repository.bars(ticker) if 'technical' in modes else []
             if live:
                 if os.getenv('BOT_ALLOW_LIVE','false').lower()!='true': return messages('Live lookup belum diaktifkan. Gunakan data run tersimpan terlebih dahulu.')
                 from .core_service import build_service
@@ -171,7 +171,9 @@ class ResearchBot:
                 company=service.lookup(ticker,live=True); bars=service.repository.get_prices(ticker)
                 signature=hashlib.sha256(json.dumps(company,sort_keys=True,allow_nan=False).encode()).hexdigest()[:16]
                 output=self.output/signature
-            else: company=repository.company(ticker)
+            else:
+                company=({'ticker':ticker,'as_of':repository.report['as_of']} if modes==('broker',)
+                         else repository.company(ticker))
             if scoped:
                 company=select_analysis(company,modes)
                 output=self.output/hashlib.sha256((str(output.name)+'|'+ '+'.join(modes)).encode()).hexdigest()[:16]

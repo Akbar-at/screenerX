@@ -179,6 +179,10 @@ class TelegramTests(unittest.TestCase):
                 self.assertEqual(result[0]['kind'],'photo');self.assertGreater(len(result),1)
                 paths.append(render.call_args.args[2])
             self.assertEqual(len(set(paths)),4)
+            repository.bars.reset_mock();repository.company.reset_mock()
+            bot.prepare('/fundamental TEST');repository.bars.assert_not_called()
+            repository.company.reset_mock()
+            bot.prepare('/broker TEST');repository.bars.assert_not_called();repository.company.assert_not_called()
 
     def test_top10_attaches_a_chart_and_narrative_for_every_candidate(self):
         repository=MagicMock()
