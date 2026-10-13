@@ -29,4 +29,4 @@ If using Yahoo for prices, deliberately change `fundamental.allowed_price_source
 4. Is CSV export or a documented API licensed for this personal screener? What are limits and redisplay restrictions?
 5. Can you supply a small actual sample matching these three CSV schemas before payment? What are the current total fees, taxes and data entitlement charges?
 
-The core screen makes no network requests. The optional Yahoo chart importer requires no API key, but live access from this cloud is currently blocked pending the saved network-setting change. Complete fundamental and broker public-API coverage is not yet established.
+The core screen makes no network requests. The default yfinance importer requires no API key; live access succeeded for the15-stock research watchlist on October12,2026. Complete reviewed fundamental and broker coverage is not established. Use the separate price-only research mode while those inputs remain on hold.

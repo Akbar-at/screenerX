@@ -1,0 +1,14 @@
+{
+  "forecast_years": 5,
+  "reporting_lag_days": 90,
+  "maximum_statement_age_days": 550,
+  "tax_rate": 0.22,
+  "default_payout_ratio": 0.40,
+  "maximum_dispersion": 0.50,
+  "fair_price_band": 0.10,
+  "scenarios": {
+    "bear": {"cost_of_equity": 0.15, "wacc": 0.13, "growth": 0.00, "terminal_growth": 0.02, "earnings_multiplier": 0.80},
+    "base": {"cost_of_equity": 0.12, "wacc": 0.10, "growth": 0.04, "terminal_growth": 0.03, "earnings_multiplier": 1.00},
+    "bull": {"cost_of_equity": 0.10, "wacc": 0.09, "growth": 0.06, "terminal_growth": 0.04, "earnings_multiplier": 1.10}
+  }
+}

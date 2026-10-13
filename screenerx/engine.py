@@ -178,10 +178,15 @@ def read_csv(path, required):
     return rows
 
 
-def load_inputs(prices_path, valuations_path, brokers_path):
-    prices=defaultdict(list); vals={}; brokers=defaultdict(dict)
+def load_prices(prices_path):
+    return parse_prices(read_csv(prices_path, ['ticker','date','open','high','low','close','volume','traded_value_idr','source','corporate_actions_checked']))
+
+
+def parse_prices(records):
+    """Shared price normalization for CSV and in-memory source adapters."""
+    prices=defaultdict(list)
     seen=set()
-    for row in read_csv(prices_path, ['ticker','date','open','high','low','close','volume','traded_value_idr','source','corporate_actions_checked']):
+    for row in records:
         ticker=row['ticker'].strip().upper(); d=day(row['date'],'price date')
         if not ticker or (ticker,d) in seen:
             raise InputError('Empty ticker or duplicate price row')
@@ -200,6 +205,11 @@ def load_inputs(prices_path, valuations_path, brokers_path):
         prices[ticker].append(parsed)
     for rows in prices.values():
         rows.sort(key=lambda r:r['date'])
+    return prices
+
+
+def load_inputs(prices_path, valuations_path, brokers_path):
+    prices=load_prices(prices_path); vals={}; brokers=defaultdict(dict)
     for row in read_csv(valuations_path, ['ticker','sector','valuation_date','price_date','valuation_price','price_source','valuation_source','validated','critical_flags','eva','ddm','rim','levels_date','support','stop_anchor','resistance1','resistance2','levels_source']):
         ticker=row['ticker'].strip().upper()
         if not ticker or ticker in vals:

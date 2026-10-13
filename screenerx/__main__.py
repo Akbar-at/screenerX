@@ -11,6 +11,10 @@ from .engine import InputError, OUTPUT_FIELDS, day, file_hash, load_config, load
 
 
 def main(argv=None):
+    arguments=sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] in ('core','screen','inspect','serve'):
+        from .core_cli import main as core_main
+        return core_main(arguments[1:] if arguments[0]=='core' else arguments)
     parser=argparse.ArgumentParser(description='Rank IDX opportunities from prices, broker flows and reviewed valuations. No network calls or trade execution.')
     parser.add_argument('--prices', required=True, help='Daily regular-market OHLCV CSV')
     parser.add_argument('--valuations', required=True, help='Reviewed method values and frozen structural levels CSV')

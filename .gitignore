@@ -5,4 +5,8 @@ output/
 data/
 .env
 .env.*
+!.env.bot.example
 .auth/
+node_modules/
+.wrangler/
+.dev.vars

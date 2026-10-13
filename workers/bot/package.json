@@ -1,0 +1,8 @@
+{
+  "name": "screenerx-telegram-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {"check": "tsc --noEmit", "test": "tsx --test test/*.test.ts", "dev": "wrangler dev", "deploy": "wrangler deploy"},
+  "dependencies": {"@cloudflare/containers": "latest", "@neondatabase/serverless": "^1.0.0"},
+  "devDependencies": {"@cloudflare/workers-types": "latest", "@types/node": "^22.0.0", "typescript": "^5.9.0", "tsx": "^4.20.0", "wrangler": "^4.0.0"}
+}

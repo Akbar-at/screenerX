@@ -1,0 +1,7 @@
+{
+  "profile_name": "wsj_covered_research_v1",
+  "weights": {"fundamental": 50, "technical": 40, "liquidity": 10},
+  "ranking": {"max_results": 10, "minimum_score": 0},
+  "minimum_methods": 2,
+  "liquidity_full_credit_multiple": 5
+}

@@ -6,11 +6,12 @@ import unittest
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 from urllib.error import HTTPError
 
 from examples.generate_demo import generate
 from screenerx.engine import InputError, load_config, load_inputs, screen
-from screenerx.fetch import JAKARTA, chart_url, fetch_json, main, parse_chart, symbol_for
+from screenerx.fetch import JAKARTA, chart_url, fetch_json, fetch_yfinance, main, parse_chart, symbol_for
 
 
 def fixture():
@@ -19,6 +20,26 @@ def fixture():
 
 
 class FetchTests(unittest.TestCase):
+    def test_yfinance_uses_unadjusted_history_and_preserves_missing_values(self):
+        stamp=datetime(2026,7,15,9,tzinfo=JAKARTA)
+        row={'Open':100,'High':105,'Low':99,'Close':103,'Volume':2000,'Dividends':5,'Stock Splits':0}
+        frame=SimpleNamespace(empty=False,iterrows=lambda:iter([(stamp,row)]))
+        calls=[]
+        def history(**kwargs):
+            calls.append(kwargs); return frame
+        stock=SimpleNamespace(history=history,history_metadata={'symbol':'BBCA.JK','currency':'IDR','exchangeTimezoneName':'Asia/Jakarta'})
+        with patch.dict('sys.modules',{'yfinance':SimpleNamespace(Ticker=lambda _:stock)}):
+            payload,raw=fetch_yfinance('BBCA',date(2026,7,15),400)
+            parsed,quality=parse_chart(payload,'BBCA',date(2026,7,15))
+            self.assertFalse(calls[0]['auto_adjust'])
+            self.assertEqual(calls[0]['end'],'2026-07-16')
+            self.assertEqual(parsed[0]['close'],103)
+            self.assertTrue(quality['corporate_actions_events']['dividends'])
+            row['Close']=float('nan')
+            payload,_=fetch_yfinance('BBCA',date(2026,7,15),400)
+            self.assertIsNone(payload['chart']['result'][0]['indicators']['quote'][0]['close'][0])
+            with self.assertRaises(InputError): parse_chart(payload,'BBCA',date(2026,7,15))
+
     def test_ticker_mapping_and_url(self):
         self.assertEqual(symbol_for('bbca.jk'),('BBCA','BBCA.JK'))
         self.assertIn('/BBCA.JK?',chart_url('BBCA',date(2026,7,15),400))
@@ -67,7 +88,7 @@ class FetchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             output=Path(folder)/'api'
             with patch('screenerx.fetch.fetch_json',return_value=(fixture(),json.dumps(fixture()).encode())):
-                rc=main(['--tickers','BBCA','--as-of','2026-07-15','--output',str(output)])
+                rc=main(['--provider','chart','--tickers','BBCA','--as-of','2026-07-15','--output',str(output)])
             self.assertEqual(rc,0)
             with (output/'prices.csv').open() as f: rows=list(csv.DictReader(f))
             self.assertEqual(rows[0]['source'],'Yahoo Finance')
@@ -81,7 +102,7 @@ class FetchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             output=Path(folder)/'api'
             with patch('screenerx.fetch.fetch_json',side_effect=InputError('network denied')):
-                rc=main(['--tickers','BBCA','--as-of','2026-07-15','--output',str(output)])
+                rc=main(['--provider','chart','--tickers','BBCA','--as-of','2026-07-15','--output',str(output)])
             self.assertEqual(rc,2)
             report=json.loads((output/'api-run.json').read_text())
             self.assertEqual(report['sources'],[])

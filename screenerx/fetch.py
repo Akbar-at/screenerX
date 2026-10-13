@@ -9,6 +9,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import re
 import sys
 import time
@@ -102,9 +103,47 @@ def parse_chart(payload,ticker,asof,actions_reviewed=False):
     return rows,{'symbol':symbol,'currency':'IDR','missing_candle_dates':gaps,'corporate_actions_events':result.get('events',{}),'actions_reviewed':actions_reviewed,'turnover_basis':'close_times_volume_estimate','quotes_available':False}
 
 
+def fetch_yfinance(ticker,asof,lookback_days,timeout=20):
+    """Normalize unadjusted yfinance history into the validated chart contract."""
+    try:
+        import yfinance as yf
+    except ImportError as exc:
+        raise InputError('Install market-data dependencies: python -m pip install -r requirements.txt') from exc
+    _,symbol=symbol_for(ticker)
+    try:
+        stock=yf.Ticker(symbol)
+        frame=stock.history(start=(asof-timedelta(days=lookback_days)).isoformat(),
+                            end=(asof+timedelta(days=1)).isoformat(),interval='1d',
+                            auto_adjust=False,actions=True,keepna=True,timeout=timeout)
+        if frame.empty:
+            raise InputError('yfinance returned no history')
+        meta=stock.history_metadata
+        quotes={key:[] for key in ('open','high','low','close','volume')}
+        stamps=[]; events={'dividends':{},'splits':{}}
+        for stamp,row in frame.iterrows():
+            stamps.append(int(stamp.timestamp()))
+            for key in quotes:
+                value=float(row[key.title()])
+                quotes[key].append(value if math.isfinite(value) else None)
+            for column,kind in [('Dividends','dividends'),('Stock Splits','splits')]:
+                value=float(row.get(column,0))
+                if value and math.isfinite(value):
+                    events[kind][str(stamps[-1])]={'date':stamps[-1],'value':value}
+        payload={'chart':{'error':None,'result':[{'meta':{
+            'symbol':meta.get('symbol',symbol),'currency':meta.get('currency'),
+            'exchangeTimezoneName':meta.get('exchangeTimezoneName')},
+            'timestamp':stamps,'indicators':{'quote':[quotes]},'events':events}]}}
+        return payload,json.dumps(payload,allow_nan=False).encode('utf-8')
+    except InputError:
+        raise
+    except Exception as exc:
+        raise InputError(f'yfinance failed for {symbol}: {exc}') from exc
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Fetch public Yahoo IDX daily prices. Fundamentals and broker flow are not provided.')
     parser.add_argument('--tickers',nargs='+',required=True,help='IDX symbols, e.g. BBCA BMRI ANTM; .JK optional')
+    parser.add_argument('--provider',choices=['yfinance','chart'],default='yfinance')
     parser.add_argument('--as-of',required=True,help='Completed decision session YYYY-MM-DD')
     parser.add_argument('--lookback-days',type=int,default=400)
     parser.add_argument('--output',required=True,help='New directory; existing data are never overwritten')
@@ -131,7 +170,10 @@ def main(argv=None):
         for ticker in tickers:
             url=chart_url(ticker,asof,args.lookback_days)
             try:
-                payload,raw=fetch_json(url,args.timeout,args.retries)
+                if args.provider=='yfinance':
+                    payload,raw=fetch_yfinance(ticker,asof,args.lookback_days,args.timeout)
+                else:
+                    payload,raw=fetch_json(url,args.timeout,args.retries)
                 (folder/'raw'/f'{ticker}.json').write_bytes(raw)
                 parsed,quality=parse_chart(payload,ticker,asof,args.actions_reviewed)
                 rows.extend(parsed)
@@ -147,7 +189,7 @@ def main(argv=None):
         if 'Yahoo Finance' not in config['fundamental']['allowed_price_sources']:
             config['fundamental']['allowed_price_sources'].append('Yahoo Finance')
         (folder/'screen-config.json').write_text(json.dumps(config,indent=2)+'\n')
-        report={'provider':'Yahoo public chart endpoint (unsupported API contract)','fetched_at':datetime.now(timezone.utc).isoformat(),'as_of':args.as_of,'lookback_days':args.lookback_days,'sources':sources,'errors':errors,'fundamentals_available':False,'broker_flow_available':False}
+        report={'provider':args.provider,'fetched_at':datetime.now(timezone.utc).isoformat(),'as_of':args.as_of,'lookback_days':args.lookback_days,'sources':sources,'errors':errors,'fundamentals_available':False,'broker_flow_available':False,'broker_flow_status':'ON_HOLD'}
         (folder/'api-run.json').write_text(json.dumps(report,indent=2)+'\n')
         print(f'Prices written: {folder / "prices.csv"}. Full screening still requires reviewed valuations, structural levels and broker flows.')
         return 2 if errors else 0
