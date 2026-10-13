@@ -153,7 +153,7 @@ The [Telegram bot](docs/telegram-bot.md) returns Indonesian descriptive research
 .\.venv\Scripts\python.exe -m screenerx.telegram_bot preview --run-dir output/top10-yfinance-latest-2026-10-12/core --prices output/top10-yfinance-latest-2026-10-12/prices.csv --command '/top10'
 ```
 
-The Cloudflare Worker + Python Container + Neon/Queues/R2 deployment is live. GitHub Actions builds and deploys the image in the cloud. Telegram delivery awaits the BotFather token and allowed user/chat IDs; see the setup guide.
+The Cloudflare Worker + Python Container + Neon/Queues/R2 deployment is live. GitHub Actions builds and deploys the image in the cloud. The private Telegram bot [@ScreenX_idxbot](https://t.me/ScreenX_idxbot) is activated; webhook delivery and replies are verified. See the setup guide for commands and operations.
 
 Run company financials across an existing full-universe price collection using Yahoo explicitly:
 
