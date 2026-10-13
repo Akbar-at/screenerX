@@ -5,6 +5,7 @@ import { authorized, sameSecret } from './auth';
 interface Env {
   DATABASE_URL: string; TELEGRAM_BOT_TOKEN: string; TELEGRAM_WEBHOOK_SECRET: string; ENGINE_SECRET: string;
   TELEGRAM_ALLOWED_USER_IDS: string; TELEGRAM_ALLOWED_CHAT_IDS: string; INPUT_BUNDLE_URL: string;
+  TELEGRAM_OPEN_GROUP_IDS: string;
   BOT_ALLOW_LIVE: string; BOT_AUTO_REFRESH: string;
   BOT_QUEUE: Queue<{update_id: number}>; REPORTS: R2Bucket;
   ENGINE: DurableObjectNamespace<ResearchEngine>;
@@ -18,6 +19,7 @@ export class ResearchEngine extends Container<Env> {
     TELEGRAM_BOT_TOKEN: this.env.TELEGRAM_BOT_TOKEN ?? '',
     TELEGRAM_ALLOWED_USER_IDS: this.env.TELEGRAM_ALLOWED_USER_IDS ?? '',
     TELEGRAM_ALLOWED_CHAT_IDS: this.env.TELEGRAM_ALLOWED_CHAT_IDS ?? '',
+    TELEGRAM_OPEN_GROUP_IDS: this.env.TELEGRAM_OPEN_GROUP_IDS ?? '',
     ENGINE_SECRET: this.env.ENGINE_SECRET,
     BOT_ALLOW_LIVE: this.env.BOT_ALLOW_LIVE ?? 'false',
     BOT_AUTO_REFRESH: this.env.BOT_AUTO_REFRESH ?? 'true',
@@ -140,7 +142,9 @@ export default {
     if (new TextEncoder().encode(body).byteLength > 32768) return new Response('Too large', {status: 413});
     let update: unknown;
     try { update = JSON.parse(body); } catch { return new Response('Bad JSON', {status: 400}); }
-    if (!authorized(update, env.TELEGRAM_ALLOWED_USER_IDS, env.TELEGRAM_ALLOWED_CHAT_IDS)) return new Response('Forbidden', {status: 403});
+    if (!authorized(update, env.TELEGRAM_ALLOWED_USER_IDS, env.TELEGRAM_ALLOWED_CHAT_IDS, env.TELEGRAM_OPEN_GROUP_IDS)) return new Response('Forbidden', {status: 403});
+    if (['group','supergroup'].includes((update as any).message.chat?.type) && !update.message.text.trimStart().startsWith('/'))
+      return Response.json({ok:true,ignored:true});
     const sql = neon(env.DATABASE_URL);
     await sql`INSERT INTO sx_bot_updates(update_id,payload) VALUES (${update.update_id},${JSON.stringify(update)}) ON CONFLICT(update_id) DO NOTHING`;
     // Return success once durable storage accepts the update; Cron also repairs dispatch failures.

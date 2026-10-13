@@ -10,7 +10,7 @@ from urllib.error import HTTPError
 
 from screenerx.bot_store import BotStore
 from screenerx.reporting import narrative,recommendation
-from screenerx.telegram_bot import ResearchBot,DeliveryError,authorized,chunks,handler
+from screenerx.telegram_bot import ResearchBot,TelegramClient,DeliveryError,authorized,chunks,handler
 
 
 def update(uid=1,text='/help',user=7,chat=-8):
@@ -32,6 +32,29 @@ class TelegramTests(unittest.TestCase):
             self.assertFalse(authorized(item,{'7'},{'-8'}))
         self.assertFalse(self.bot.accept(update(user=9)))
         self.assertEqual(self.store.counts(),{})
+
+    def test_open_group_allows_members_only_in_configured_group(self):
+        group=update(user=99,chat=-100777000123)
+        group['message']['chat']['type']='supergroup'
+        groups={'-100777000123'}
+        self.assertTrue(authorized(group,{'7'},{'-8'},groups))
+        self.assertFalse(authorized(update(user=99,chat=-100777000123),{'7'},{'-8'},groups))
+        group['message']['chat']['id']=-100111
+        self.assertFalse(authorized(group,{'7'},{'-8'},groups))
+        self.assertFalse(authorized(update(user=99,chat=99),{'7'},{'-8'},groups))
+
+    def test_forum_replies_keep_topic_in_durable_outbox_and_all_media(self):
+        item=update(user=99,chat=-100777000123)
+        item['message']['chat']['type']='supergroup';item['message']['message_thread_id']=2
+        self.bot.open_groups={'-100777000123'}
+        self.assertTrue(self.bot.accept(item));self.assertEqual(self.bot.process(1),'DONE')
+        for row in self.store.parts(1):
+            self.assertEqual(json.loads(row['payload'])['message_thread_id'],2)
+        client=TelegramClient.__new__(TelegramClient);client.request=MagicMock(return_value={})
+        for kind in ('text','photo','document'):
+            path=Path(self.temp.name)/'test.png';path.write_bytes(b'test')
+            client._send(-100777000123,{'kind':kind,'text':'test','path':str(path),'message_thread_id':2})
+            self.assertEqual(client.request.call_args.args[1]['message_thread_id'],2)
 
     def test_duplicate_update_never_resends_sent_parts(self):
         self.assertTrue(self.bot.accept(update()))

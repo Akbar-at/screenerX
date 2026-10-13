@@ -51,11 +51,12 @@ def telegram_html(text):
                    for part in parts)
 
 
-def authorized(update,users,chats):
+def authorized(update,users,chats,open_groups=()):
     message=update.get('message')
+    chat=message.get('chat',{}) if isinstance(message,dict) else {}
+    open_group=chat.get('type') in ('group','supergroup') and str(chat.get('id')) in open_groups
     return (type(update.get('update_id')) is int and isinstance(message,dict)
-            and str(message.get('from',{}).get('id')) in users
-            and str(message.get('chat',{}).get('id')) in chats
+            and (open_group or (str(message.get('from',{}).get('id')) in users and str(chat.get('id')) in chats))
             and isinstance(message.get('text'),str) and len(message['text'])<=4096)
 
 
@@ -98,22 +99,26 @@ class TelegramClient:
         kind=message['kind']
         if kind=='text':
             payload={'chat_id':chat_id,'text':message['text']}
+            if message.get('message_thread_id'): payload['message_thread_id']=message['message_thread_id']
             if message.get('parse_mode'): payload['parse_mode']=message['parse_mode']
             return self.request('sendMessage',payload)
         field='photo' if kind=='photo' else 'document'
         path=Path(message['path'])
         with path.open('rb') as stream:
+            payload={'chat_id':str(chat_id),'caption':message.get('caption','')[:1000]}
+            if message.get('message_thread_id'): payload['message_thread_id']=message['message_thread_id']
             return self.request('sendPhoto' if kind=='photo' else 'sendDocument',
-                                {'chat_id':str(chat_id),'caption':message.get('caption','')[:1000]},
+                                payload,
                                 {field:(path.name,stream,'image/png' if kind=='photo' else 'application/pdf')})
 
 
 class ResearchBot:
-    def __init__(self,repository,store,client,users,chats,output='output/bot-artifacts',delivery_enabled=True):
-        if delivery_enabled and (not users or not chats): raise InputError('Explicit allowed user and chat IDs are required')
+    def __init__(self,repository,store,client,users,chats,output='output/bot-artifacts',delivery_enabled=True,open_groups=()):
+        if delivery_enabled and not open_groups and (not users or not chats): raise InputError('Explicit allowed user/chat IDs or group IDs are required')
         self.delivery_enabled=delivery_enabled
         self.repository=repository; self.store=store; self.client=client
         self.users=set(map(str,users)); self.chats=set(map(str,chats)); self.output=Path(output)
+        self.open_groups=set(map(str,open_groups))
 
     def prepare(self,text):
         args=text.strip().split(); command=args[0].split('@')[0].lower() if args else '/help'
@@ -165,7 +170,9 @@ class ResearchBot:
 
     def accept(self,update):
         if not self.delivery_enabled: return False
-        if not authorized(update,self.users,self.chats): return False
+        if not authorized(update,self.users,self.chats,self.open_groups): return False
+        if update['message'].get('chat',{}).get('type') in ('group','supergroup') and not update['message']['text'].lstrip().startswith('/'):
+            return True # acknowledge ordinary group chat without replying
         self.store.accept(update); return True
 
     def process(self,update_id):
@@ -174,8 +181,10 @@ class ResearchBot:
         if update is None:
             rows=self.store.query('SELECT status FROM sx_bot_updates WHERE update_id=?',(update_id,),True)
             return rows[0]['status'] if rows and rows[0]['status'] in ('DONE','UNCERTAIN','FAILED','REJECTED') else 'NOT_CLAIMED'
-        if not authorized(update,self.users,self.chats):
+        if not authorized(update,self.users,self.chats,self.open_groups):
             self.store.finish(update_id,'REJECTED'); return 'REJECTED'
+        if update['message'].get('chat',{}).get('type') in ('group','supergroup') and not update['message']['text'].lstrip().startswith('/'):
+            self.store.finish(update_id,'DONE'); return 'DONE'
         try:
             try: messages=self.prepare(update['message']['text'])
             except (InputError,ValueError) as exc: messages=[{'kind':'text','text':str(exc)}]
@@ -188,6 +197,9 @@ class ResearchBot:
                         response=client.put(os.environ['ARTIFACT_ARCHIVE_URL'].rstrip('/')+'/'+path.parent.name+'/'+path.name,
                             headers={'Authorization':'Bearer '+os.environ['ENGINE_SECRET']},content=path.read_bytes())
                         response.raise_for_status()
+            thread=update['message'].get('message_thread_id')
+            if type(thread) is int and thread>0:
+                for message in messages: message['message_thread_id']=thread
             self.store.stage(update_id,messages)
             for part in self.store.parts(update_id):
                 if not self.store.begin_send(update_id,part['part']): continue
@@ -218,6 +230,7 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
             if self.path=='/health': return self.respond(200,{'status':'ok',
                 'as_of':bot.repository.report.get('as_of'),
                 'renderer_version':RENDERER_VERSION,
+                'open_group_count':len(bot.open_groups),
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
@@ -302,16 +315,17 @@ def main(argv=None):
     repository=ReportRepository(args.run_dir,args.prices)
     users={x.strip() for x in os.getenv('TELEGRAM_ALLOWED_USER_IDS','').split(',') if x.strip()}
     chats={x.strip() for x in os.getenv('TELEGRAM_ALLOWED_CHAT_IDS','').split(',') if x.strip()}
+    open_groups={x.strip() for x in os.getenv('TELEGRAM_OPEN_GROUP_IDS','').split(',') if x.strip()}
     if args.mode=='preview':
         bot=ResearchBot(repository,BotStore(args.state),None,users or {'preview'},chats or {'preview'},args.output)
         messages=bot.prepare(args.command)
         print(json.dumps(messages,indent=2,ensure_ascii=True)); return
     store=BotStore(args.state,os.getenv('DATABASE_URL'))
-    delivery_enabled=bool(os.getenv('TELEGRAM_BOT_TOKEN') and users and chats)
+    delivery_enabled=bool(os.getenv('TELEGRAM_BOT_TOKEN') and ((users and chats) or open_groups))
     if not delivery_enabled and args.mode != 'serve':
         raise InputError('Telegram token and allowed user/chat IDs are required for polling')
     client=TelegramClient(os.getenv('TELEGRAM_BOT_TOKEN')) if delivery_enabled else None
-    bot=ResearchBot(repository,store,client,users,chats,args.output,delivery_enabled=delivery_enabled)
+    bot=ResearchBot(repository,store,client,users,chats,args.output,delivery_enabled=delivery_enabled,open_groups=open_groups)
     if not delivery_enabled: print('Research engine active; Telegram delivery awaits configuration',flush=True)
     refresh=None
     if os.getenv('BOT_AUTO_REFRESH','false').lower()=='true':
