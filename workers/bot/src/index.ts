@@ -56,13 +56,13 @@ export default {
       const busy=await sql`SELECT 1 FROM sx_refresh_jobs WHERE status='RUNNING' AND lease_until>${now}
         UNION ALL SELECT 1 FROM sx_bot_updates WHERE status='PROCESSING' AND lease_until>${now} LIMIT 1`;
       if (busy.length) return Response.json({error:'Research engine is processing work'}, {status:409});
-      await env.ENGINE.getByName('research-bot').stop();
+      await env.ENGINE.getByName('research-bot-v2').stop();
       return Response.json({status:'stopped',message:'The next request starts the engine with current cloud secrets'});
     }
     if (path === '/internal/engine/configure' && request.method === 'POST') {
       if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))
         return new Response('Forbidden', {status:403});
-      return env.ENGINE.getByName('research-bot').fetch(new Request('http://engine/internal/access',{
+      return env.ENGINE.getByName('research-bot-v2').fetch(new Request('http://engine/internal/access',{
         method:'POST',headers:{'Authorization':'Bearer '+env.ENGINE_SECRET,'Content-Type':'application/json'},
         body:JSON.stringify(accessSettings(env)),
       }));
@@ -73,7 +73,7 @@ export default {
         return new Response('Forbidden', {status: 403});
       try {
         const target=path === '/internal/engine/health' ? '/health' : '/internal/refresh';
-        return await env.ENGINE.getByName('research-bot').fetch(new Request('http://engine'+target,request));
+        return await env.ENGINE.getByName('research-bot-v2').fetch(new Request('http://engine'+target,request));
       } catch { return Response.json({error:'Research engine unavailable'}, {status:503}); }
     }
     if (path.startsWith('/internal/artifacts/') && request.method === 'PUT') {
@@ -167,7 +167,7 @@ export default {
   async queue(batch: MessageBatch<{update_id: number}>, env: Env) {
     for (const message of batch.messages) {
       try {
-        const engine = env.ENGINE.getByName('research-bot');
+        const engine = env.ENGINE.getByName('research-bot-v2');
         const response = await engine.fetch(new Request('http://engine/internal/process', {
           method: 'POST', headers: {'Authorization': 'Bearer ' + env.ENGINE_SECRET, 'Content-Type': 'application/json'},
           body: JSON.stringify({...message.body,access:accessSettings(env)}),
@@ -188,7 +188,7 @@ export default {
       const pending=await sql`SELECT request_date FROM sx_refresh_jobs WHERE status IN ('PENDING','RUNNING') OR (status='RETRY' AND next_at<=${now} AND attempts<3) ORDER BY request_date LIMIT 1`;
       if (event.cron !== '30 11 * * 1-5' && !pending.length) return;
       const date=pending.length ? pending[0].request_date : new Date(event.scheduledTime+7*3600*1000).toISOString().slice(0,10);
-      const engine=env.ENGINE.getByName('research-bot');
+      const engine=env.ENGINE.getByName('research-bot-v2');
       const response=await engine.fetch(new Request('http://engine/internal/refresh',{
         method:'POST',headers:{'Authorization':'Bearer '+env.ENGINE_SECRET,'Content-Type':'application/json'},
         body:JSON.stringify({request_date:date}),
