@@ -43,6 +43,27 @@ class TelegramTests(unittest.TestCase):
         self.assertFalse(authorized(group,{'7'},{'-8'},groups))
         self.assertFalse(authorized(update(user=99,chat=99),{'7'},{'-8'},groups))
 
+    def test_authenticated_access_reload_preserves_private_access(self):
+        group=update(user=99,chat=-100777000123)
+        group['message']['chat']['type']='supergroup'
+        self.assertFalse(self.bot.accept(group))
+        server=ThreadingHTTPServer(('127.0.0.1',0),handler(self.bot,'engine-secret','webhook-secret'))
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        url=f'http://127.0.0.1:{server.server_port}/internal/access'
+        settings={'users':'7','chats':'-8','groups':'-100777000123'}
+        try:
+            with self.assertRaises(HTTPError) as error:
+                urlopen(Request(url,data=json.dumps(settings).encode()))
+            self.assertEqual(error.exception.code,403)
+            self.assertEqual(self.bot.open_groups,set())
+            response=urlopen(Request(url,data=json.dumps(settings).encode(),headers={'Authorization':'Bearer engine-secret'}))
+            self.assertEqual(json.load(response)['open_group_count'],1)
+            self.assertTrue(self.bot.accept(group))
+            self.assertTrue(authorized(update(),self.bot.users,self.bot.chats,self.bot.open_groups))
+            self.assertFalse(authorized(update(user=99,chat=99),self.bot.users,self.bot.chats,self.bot.open_groups))
+            self.client.send.assert_not_called()
+        finally: server.shutdown();server.server_close();thread.join()
+
     def test_forum_replies_keep_topic_in_durable_outbox_and_all_media(self):
         item=update(user=99,chat=-100777000123)
         item['message']['chat']['type']='supergroup';item['message']['message_thread_id']=2

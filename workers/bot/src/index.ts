@@ -30,6 +30,11 @@ export class ResearchEngine extends Container<Env> {
   };
 }
 
+function accessSettings(env: Env) {
+  return {users:env.TELEGRAM_ALLOWED_USER_IDS ?? '',chats:env.TELEGRAM_ALLOWED_CHAT_IDS ?? '',
+    groups:env.TELEGRAM_OPEN_GROUP_IDS ?? ''};
+}
+
 async function dispatch(env: Env) {
   const sql = neon(env.DATABASE_URL);
   const now = Date.now() / 1000;
@@ -53,6 +58,14 @@ export default {
       if (busy.length) return Response.json({error:'Research engine is processing work'}, {status:409});
       await env.ENGINE.getByName('research-bot').stop();
       return Response.json({status:'stopped',message:'The next request starts the engine with current cloud secrets'});
+    }
+    if (path === '/internal/engine/configure' && request.method === 'POST') {
+      if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))
+        return new Response('Forbidden', {status:403});
+      return env.ENGINE.getByName('research-bot').fetch(new Request('http://engine/internal/access',{
+        method:'POST',headers:{'Authorization':'Bearer '+env.ENGINE_SECRET,'Content-Type':'application/json'},
+        body:JSON.stringify(accessSettings(env)),
+      }));
     }
     if ((path === '/internal/engine/health' && request.method === 'GET') ||
         (path === '/internal/refresh' && request.method === 'POST')) {
@@ -157,7 +170,7 @@ export default {
         const engine = env.ENGINE.getByName('research-bot');
         const response = await engine.fetch(new Request('http://engine/internal/process', {
           method: 'POST', headers: {'Authorization': 'Bearer ' + env.ENGINE_SECRET, 'Content-Type': 'application/json'},
-          body: JSON.stringify(message.body),
+          body: JSON.stringify({...message.body,access:accessSettings(env)}),
         }));
         if (response.ok) message.ack(); else message.retry({delaySeconds: 60});
       } catch { message.retry({delaySeconds: 60}); }

@@ -175,6 +175,13 @@ class ResearchBot:
             return True # acknowledge ordinary group chat without replying
         self.store.accept(update); return True
 
+    def configure_access(self,settings):
+        if not isinstance(settings,dict) or any(not isinstance(settings.get(k),str) for k in ('users','chats','groups')):
+            raise ValueError('Invalid access settings')
+        self.users={s.strip() for s in settings['users'].split(',') if s.strip()}
+        self.chats={s.strip() for s in settings['chats'].split(',') if s.strip()}
+        self.open_groups={s.strip() for s in settings['groups'].split(',') if s.strip()}
+
     def process(self,update_id):
         if not self.delivery_enabled: return 'NOT_CONFIGURED'
         update=self.store.claim(update_id)
@@ -234,19 +241,23 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
-            internal=self.path in ('/internal/process','/internal/refresh')
+            internal=self.path in ('/internal/process','/internal/refresh','/internal/access')
             secret=self.headers.get('Authorization','') if internal else self.headers.get('X-Telegram-Bot-Api-Secret-Token','')
             expected='Bearer '+engine_secret if internal else webhook_secret
             if not expected or expected=='Bearer ' or not hmac.compare_digest(secret,expected): return self.respond(403,{'error':'Forbidden'})
-            if self.path not in ('/internal/process','/internal/refresh','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
+            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
             try:
                 length=int(self.headers.get('Content-Length','0'))
                 if not 0<length<=32768: return self.respond(413,{'error':'Invalid payload size'})
                 payload=json.loads(self.rfile.read(length))
+                if self.path=='/internal/access':
+                    bot.configure_access(payload)
+                    return self.respond(200,{'status':'configured','open_group_count':len(bot.open_groups)})
                 if self.path=='/internal/refresh':
                     if refresh is None: return self.respond(503,{'error':'Refresh not configured'})
                     return self.respond(202,{'status':refresh.start(payload.get('request_date'))})
                 if internal:
+                    if 'access' in payload: bot.configure_access(payload['access'])
                     result=bot.process(int(payload['update_id']))
                     return self.respond(503 if result in ('RETRY','NOT_CLAIMED','NOT_CONFIGURED') else 200,{'status':result})
                 if not bot.accept(payload): return self.respond(403,{'error':'Unauthorized sender'})
