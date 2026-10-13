@@ -96,3 +96,5 @@ The dashboard was previewed with real PTSN and BBNI data, and all eight shortlis
 TELEGRAM_OPEN_GROUP_IDS enables commands from every member of only the explicitly configured Telegram groups/supergroups. Existing private user/chat allowlists remain active. Other groups and private chats remain restricted. Keep real group IDs in Cloudflare secrets and ignored .env.bot; public test fixtures use fictional IDs.
 
 The bot preserves message_thread_id on text, photo, and PDF outbox parts, so a forum command receives replies in its original topic. Ordinary group conversation is acknowledged without generating replies. Group commands can explicitly address the bot, for example /stock@ScreenX_idxbot PTSN, with Telegram privacy mode enabled.
+
+The Worker attaches the current cloud access settings to every authenticated engine processing request. This prevents a long-lived container from using stale group allowlists after a secret update. Authenticated POST /internal/engine/configure applies those settings immediately; GET /internal/engine/health reports open_group_count. These endpoints require ENGINE_SECRET and do not accept public configuration changes.
