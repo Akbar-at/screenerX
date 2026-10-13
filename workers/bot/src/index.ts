@@ -155,7 +155,10 @@ export default {
     if (new TextEncoder().encode(body).byteLength > 32768) return new Response('Too large', {status: 413});
     let update: unknown;
     try { update = JSON.parse(body); } catch { return new Response('Bad JSON', {status: 400}); }
-    if (!authorized(update, env.TELEGRAM_ALLOWED_USER_IDS, env.TELEGRAM_ALLOWED_CHAT_IDS, env.TELEGRAM_OPEN_GROUP_IDS)) return new Response('Forbidden', {status: 403});
+    // Telegram retries non-2xx responses, including service events and disallowed senders.
+    // Once the webhook secret is verified, acknowledge ignored updates without storing or processing them.
+    if (!authorized(update, env.TELEGRAM_ALLOWED_USER_IDS, env.TELEGRAM_ALLOWED_CHAT_IDS, env.TELEGRAM_OPEN_GROUP_IDS))
+      return Response.json({ok:true,ignored:true});
     if (['group','supergroup'].includes((update as any).message.chat?.type) && !update.message.text.trimStart().startsWith('/'))
       return Response.json({ok:true,ignored:true});
     const sql = neon(env.DATABASE_URL);
