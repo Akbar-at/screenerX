@@ -45,11 +45,11 @@ def probe_sources(output,financial_provider='wsj'):
     return evidence
 
 
-def collect_one(ticker, asof, folder):
+def collect_one(ticker, asof, folder, refresh=False):
     """Persist successful raw responses before parsing; replay without refetching."""
     raw_path = folder / (ticker + '.json')
     try:
-        if raw_path.exists():
+        if raw_path.exists() and not refresh:
             payload = json.loads(raw_path.read_text(encoding='utf-8'))
         else:
             payload, raw = fetch_yfinance(ticker, asof, 400)
@@ -58,6 +58,7 @@ def collect_one(ticker, asof, folder):
             temporary.replace(raw_path)
         rows, quality = parse_chart(payload, ticker, asof)
         return rows, {'ticker': ticker, 'status': 'AVAILABLE', 'candles': len(rows),
+                      'current_session':any(day(str(row['date']),'date')==asof for row in rows),
                       'raw_sha256': file_hash(raw_path), 'quality': quality}
     except Exception as exc:
         return [], {'ticker': ticker, 'status': 'UNAVAILABLE', 'reason': str(exc)}
@@ -83,7 +84,7 @@ def merge_history(fresh,previous,asof):
     return [merged[key] for key in sorted(merged)],len(retained)
 
 
-def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_provider='wsj', fx_snapshot=None,previous_prices=None):
+def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_provider='wsj', fx_snapshot=None,previous_prices=None,retry_failed=False):
     if financial_provider not in ('wsj','yfinance'):
         raise InputError('Unsupported financial provider')
     if wsj_pages and financial_provider!='wsj':
@@ -127,7 +128,11 @@ def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_
     save()
     rows = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        pending = {pool.submit(collect_one, t, asof, raw_folder): t for t in tickers}
+        # Retry incomplete/corrupt captures rather than replaying the same bad
+        # response on all three durable job attempts. Healthy captures stay cached.
+        pending = {pool.submit(collect_one, t, asof, raw_folder,
+                    retry_failed and (state['prices'].get(t,{}).get('status')!='AVAILABLE'
+                                      or not state['prices'].get(t,{}).get('current_session',False))): t for t in tickers}
         for n, future in enumerate(as_completed(pending), 1):
             candles, audit = future.result()
             rows.extend(candles)
@@ -156,6 +161,7 @@ def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_
     export_report(report, report_folder)
     state.update(status='PARTIAL' if report['coverage_complete_count'] < len(tickers) else 'COMPLETE',
                  price_count=sum(a['status'] == 'AVAILABLE' for a in state['prices'].values()),
+                 current_price_count=sum(a.get('current_session',False) for a in state['prices'].values()),
                  coverage_complete_count=report['coverage_complete_count'],
                  selected_count=report['selected_count'], broker_flow_status='ON_HOLD',
                  company_data_fallback=False, report_path=str(report_folder / 'report.md'))

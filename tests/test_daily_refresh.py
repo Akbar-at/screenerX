@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock,patch
 
 from screenerx.bot_store import BotStore
-from screenerx.daily_refresh import DailyRefresh,due,atomic_json,load_latest
+from screenerx.daily_refresh import DailyRefresh,due,atomic_json,load_latest,publication_checks
 from screenerx.engine import InputError
 from screenerx.fetch import JAKARTA
 
@@ -29,13 +29,13 @@ class DailyRefreshTests(unittest.TestCase):
         folder=Path(folder); (folder/'core').mkdir(parents=True,exist_ok=True)
         (folder/'core/core-run.json').write_text(json.dumps({'as_of':'2026-10-13'}))
         (folder/'prices.csv').write_text('ticker,date\nBBCA,2026-10-13\n')
-        return {'report_path':str(folder/'core/report.md'),'price_count':90,'universe_count':100}
+        return {'report_path':str(folder/'core/report.md'),'price_count':90,'current_price_count':90,'universe_count':100}
 
     def providers(self):
         return (patch('screenerx.production.latest_session',return_value=(date(2026,10,13),{'observed':'2026-10-13'})),
                 patch('screenerx.market.run',side_effect=self.fake_market),
                 patch('screenerx.fx.fetch_fx',side_effect=InputError('Temporary FX failure')),
-                patch('screenerx.reporting.render_top'),patch('screenerx.reporting.ReportRepository'))
+                patch('screenerx.reporting.render_top'),patch('screenerx.reporting.ReportRepository',return_value=MagicMock(report={'as_of':'2026-10-13','coverage_complete_count':100})))
 
     def test_schedule_is_jakarta_weekdays_after_1830(self):
         self.assertFalse(due(datetime(2026,10,13,18,29,tzinfo=JAKARTA)))
@@ -50,6 +50,7 @@ class DailyRefreshTests(unittest.TestCase):
     def test_publish_is_atomic_and_same_day_is_not_rerun(self):
         a,b,c,d,e=self.providers()
         with a,b as market,c,d,e as repository:
+            repository.return_value.report={'as_of':'2026-10-13','coverage_complete_count':100}
             result=self.manager.run(now=NOW)
             self.assertEqual(result['status'],'PUBLISHED')
             pointer=json.loads((self.root/'latest.json').read_text())
@@ -57,6 +58,8 @@ class DailyRefreshTests(unittest.TestCase):
             self.assertTrue(Path(pointer['prices']).exists())
             self.assertEqual(self.manager.run(now=NOW)['status'],'ALREADY_HANDLED')
             self.assertEqual(market.call_count,1)
+            self.assertTrue(market.call_args.kwargs['retry_failed'])
+            self.assertEqual(market.call_args.kwargs['previous_prices'],self.repository.prices_path)
             self.callback.assert_called_once_with(repository.return_value)
 
     def test_low_price_coverage_retains_previous_report(self):
@@ -105,3 +108,41 @@ class DailyRefreshTests(unittest.TestCase):
         atomic_json(self.root/'latest.json',{'as_of':'2026-10-13','run_dir':str(self.root),'prices':str(self.root/'prices.csv'),
                     'report_sha256':'wrong','prices_sha256':'wrong'})
         with self.assertRaises(InputError): load_latest(self.repository,self.root/'latest.json')
+
+    def test_publication_rejects_stale_prices_wrong_date_and_partial_coverage_collapse(self):
+        previous={'coverage_complete_count':100}
+        good={'as_of':'2026-10-13','coverage_complete_count':101,'selected_count':0}
+        prices={'universe_count':100,'current_price_count':90,'price_count':100}
+        session=date(2026,10,13)
+        self.assertTrue(publication_checks(previous,good,prices,session)['passed'])
+        for report,counts in [({**good,'as_of':'2026-10-12'},prices),
+                              ({**good,'coverage_complete_count':49},prices),
+                              (good,{**prices,'current_price_count':79})]:
+            self.assertFalse(publication_checks(previous,report,counts,session)['passed'])
+
+    def test_rejected_candidate_retries_then_publishes_without_manual_rebuild(self):
+        self.repository.report['coverage_complete_count']=100
+        a,b,c,d,e=self.providers()
+        with a,b as market,c,d,e as repository:
+            repository.return_value.report={'as_of':'2026-10-13','coverage_complete_count':1}
+            self.assertEqual(self.manager.run(now=NOW)['status'],'RETRY')
+            self.assertFalse(self.manager.pointer.exists())
+            self.store.query('UPDATE sx_refresh_jobs SET next_at=0')
+            repository.return_value.report={'as_of':'2026-10-13','coverage_complete_count':101}
+            result=self.manager.run(now=NOW)
+            self.assertEqual(result['status'],'PUBLISHED')
+            self.assertEqual(market.call_count,2)
+            self.assertEqual(self.store.query('SELECT attempts FROM sx_refresh_jobs',fetch=True)[0]['attempts'],2)
+
+    def test_three_bad_attempts_stop_and_preserve_healthy_publication(self):
+        atomic_json(self.manager.pointer,{'as_of':'2026-10-12'})
+        a,b,c,d,e=self.providers()
+        with a,b,c,d,e as repository:
+            repository.return_value.report={'as_of':'2026-10-13','coverage_complete_count':0}
+            self.repository.report['coverage_complete_count']=100
+            for expected in ['RETRY','RETRY','FAILED']:
+                self.assertEqual(self.manager.run(now=NOW)['status'],expected)
+                self.store.query('UPDATE sx_refresh_jobs SET next_at=0')
+            self.assertEqual(self.manager.run(now=NOW)['status'],'ALREADY_HANDLED')
+        self.assertEqual(json.loads(self.manager.pointer.read_text())['as_of'],'2026-10-12')
+        self.callback.assert_not_called()

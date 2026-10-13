@@ -24,6 +24,24 @@ def atomic_json(path,value):
     temporary.replace(path)
 
 
+def publication_checks(previous,fresh,result,session):
+    """Validate data coverage, never require a minimum number of buy candidates."""
+    universe=result.get('universe_count',0)
+    current=result.get('current_price_count',0)
+    before=previous.get('coverage_complete_count',0)
+    after=fresh.get('coverage_complete_count',0)
+    checks={'expected_session':session.isoformat(),'observed_session':fresh.get('as_of'),
+            'current_prices':current,'universe_count':universe,
+            'previous_complete':before,'candidate_complete':after,
+            'minimum_current_price_ratio':.80,'minimum_complete_retention_ratio':.50}
+    reasons=[]
+    if fresh.get('as_of')!=session.isoformat(): reasons.append('Report session differs from observed completed session')
+    if not universe or current/universe<.80: reasons.append('Current-session price coverage below 80%')
+    if before>0 and (after==0 or after/before<.50): reasons.append('Complete research coverage fell below 50% of previous healthy run')
+    checks.update(passed=not reasons,reasons=reasons)
+    return checks
+
+
 class DailyRefresh:
     def __init__(self,repository,store,state_dir='output/daily-refresh',snapshots=None,fx_snapshot=None,
                  pointer='output/daily-refresh/latest.json',on_publish=None,publish_url=None,secret=None):
@@ -65,6 +83,16 @@ class DailyRefresh:
         timestamp=time.time()
         rows=self.store.query("UPDATE sx_refresh_jobs SET status='RUNNING',attempts=attempts+1,lease_until=? WHERE request_date=? AND attempts<3 AND ((status IN ('PENDING','RETRY') AND next_at<=?) OR (status='RUNNING' AND lease_until<?)) RETURNING request_date",(timestamp+300,date,timestamp,timestamp),True)
         if not rows: return {'status':'ALREADY_HANDLED'}
+        # Renew independently of Worker dispatch, including slow collection/rendering.
+        stopped=threading.Event()
+        def heartbeat():
+            while not stopped.wait(60):
+                try:
+                    self.store.query("UPDATE sx_refresh_jobs SET lease_until=? WHERE request_date=? AND status='RUNNING'",(time.time()+300,date))
+                except Exception:
+                    pass  # A transient DB outage must not kill the provider work.
+        threading.Thread(target=heartbeat,daemon=True).start()
+        checks=None
         try:
             session,discovery=latest_session(now if requested==now.date() else datetime.combine(requested,clock_time(18,30),JAKARTA))
             if session.isoformat()<=self.repository.report['as_of']:
@@ -82,13 +110,13 @@ class DailyRefresh:
                 # Cached FX still has to pass the engine's date/age/currency checks.
                 pass
             result=market_run(folder/'market',asof=session,workers=2,snapshots=self.snapshots,
-                              financial_provider='yfinance',fx_snapshot=fx_path,previous_prices=self.repository.prices_path)
-            if result['price_count']/result['universe_count']<.80:
-                raise InputError('Price coverage below 80%; previous published run retained')
+                              financial_provider='yfinance',fx_snapshot=fx_path,previous_prices=self.repository.prices_path,retry_failed=True)
             run_dir=Path(result['report_path']).parent; prices=folder/'market/prices.csv'
             fresh=ReportRepository(run_dir,prices)
-            if self.repository.report.get('coverage_complete_count',0)>0 and fresh.report.get('coverage_complete_count',0)==0:
-                raise InputError('Complete research coverage collapsed to zero; previous published run retained')
+            checks=publication_checks(self.repository.report,fresh.report,result,session)
+            atomic_json(folder/'publication-checks.json',checks)
+            if not checks['passed']:
+                raise InputError('; '.join(checks['reasons'])+'; previous published run retained')
             from .reporting import render_top
             render_top(fresh,folder/'images')
             if self.publish_url:
@@ -101,12 +129,15 @@ class DailyRefresh:
             atomic_json(self.pointer,pointer)
             self.repository=fresh; self.fx=fx_path
             if self.on_publish: self.on_publish(fresh)
-            result.update(status='PUBLISHED',latest_pointer=str(self.pointer))
+            result.update(status='PUBLISHED',latest_pointer=str(self.pointer),publication_checks=checks)
             self.finish(date,'DONE',result); return result
         except Exception as exc:
             attempts=self.store.query('SELECT attempts FROM sx_refresh_jobs WHERE request_date=?',(date,),True)[0]['attempts']
-            result={'status':'RETRY' if attempts<3 else 'FAILED','reason':str(exc)}
+            result={'status':'RETRY' if attempts<3 else 'FAILED','reason':str(exc),
+                    'serving_as_of':self.repository.report['as_of'],'publication_checks':checks}
             self.finish(date,result['status'],result,delay=900); return result
+        finally:
+            stopped.set()
 
     def finish(self,date,status,result,delay=0):
         self.store.query('UPDATE sx_refresh_jobs SET status=?,lease_until=0,next_at=?,result=? WHERE request_date=?',

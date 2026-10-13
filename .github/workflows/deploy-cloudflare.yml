@@ -18,6 +18,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate refresh recovery before deployment
+        run: |
+          pip install -r requirements.txt -r requirements-bot.txt
+          python -m unittest tests.test_market tests.test_daily_refresh
+        env:
+          MPLBACKEND: Agg
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
