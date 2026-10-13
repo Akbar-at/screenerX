@@ -202,7 +202,9 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
             self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data)))
             self.end_headers(); self.wfile.write(data)
         def do_GET(self):
-            if self.path=='/health': return self.respond(200,{'status':'ok'})
+            if self.path=='/health': return self.respond(200,{'status':'ok',
+                'as_of':bot.repository.report.get('as_of'),
+                'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
             internal=self.path in ('/internal/process','/internal/refresh')

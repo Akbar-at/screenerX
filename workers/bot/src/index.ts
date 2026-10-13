@@ -15,7 +15,7 @@ export class ResearchEngine extends Container<Env> {
   sleepAfter = '10m';
   envVars = {
     DATABASE_URL: this.env.DATABASE_URL,
-    TELEGRAM_BOT_TOKEN: this.env.TELEGRAM_BOT_TOKEN,
+    TELEGRAM_BOT_TOKEN: this.env.TELEGRAM_BOT_TOKEN ?? '',
     TELEGRAM_ALLOWED_USER_IDS: this.env.TELEGRAM_ALLOWED_USER_IDS,
     TELEGRAM_ALLOWED_CHAT_IDS: this.env.TELEGRAM_ALLOWED_CHAT_IDS,
     ENGINE_SECRET: this.env.ENGINE_SECRET,
@@ -42,6 +42,15 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const parsed = new URL(request.url); const path = parsed.pathname;
     if (path === '/health') return Response.json({status: 'ok'});
+    if ((path === '/internal/engine/health' && request.method === 'GET') ||
+        (path === '/internal/refresh' && request.method === 'POST')) {
+      if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))
+        return new Response('Forbidden', {status: 403});
+      try {
+        const target=path === '/internal/engine/health' ? '/health' : '/internal/refresh';
+        return await env.ENGINE.getByName('research-bot').fetch(new Request('http://engine'+target,request));
+      } catch { return Response.json({error:'Research engine unavailable'}, {status:503}); }
+    }
     if (path.startsWith('/internal/artifacts/') && request.method === 'PUT') {
       if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))
         return new Response('Forbidden', {status: 403});
