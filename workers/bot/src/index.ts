@@ -7,6 +7,9 @@ interface Env {
   TELEGRAM_ALLOWED_USER_IDS: string; TELEGRAM_ALLOWED_CHAT_IDS: string; INPUT_BUNDLE_URL: string;
   TELEGRAM_OPEN_GROUP_IDS: string;
   BOT_ALLOW_LIVE: string; BOT_AUTO_REFRESH: string;
+  BOT_AGENT_ENABLED: string; OPENROUTER_API_KEY: string; OPENROUTER_MODEL: string;
+  AGENT_MAX_ROUNDS: string; AGENT_MAX_TOOL_CALLS: string; AGENT_MAX_TOKENS: string; AGENT_TIMEOUT_SECONDS: string;
+  AGENT_REASONING_ENABLED: string;
   BOT_QUEUE: Queue<{update_id: number}>; REPORTS: R2Bucket;
   ENGINE: DurableObjectNamespace<ResearchEngine>;
 }
@@ -23,6 +26,14 @@ export class ResearchEngine extends Container<Env> {
     ENGINE_SECRET: this.env.ENGINE_SECRET,
     BOT_ALLOW_LIVE: this.env.BOT_ALLOW_LIVE ?? 'false',
     BOT_AUTO_REFRESH: this.env.BOT_AUTO_REFRESH ?? 'true',
+    BOT_AGENT_ENABLED: this.env.BOT_AGENT_ENABLED ?? 'false',
+    OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY ?? '',
+    OPENROUTER_MODEL: this.env.OPENROUTER_MODEL ?? '',
+    AGENT_MAX_ROUNDS: this.env.AGENT_MAX_ROUNDS ?? '6',
+    AGENT_MAX_TOOL_CALLS: this.env.AGENT_MAX_TOOL_CALLS ?? '12',
+    AGENT_MAX_TOKENS: this.env.AGENT_MAX_TOKENS ?? '1200',
+    AGENT_TIMEOUT_SECONDS: this.env.AGENT_TIMEOUT_SECONDS ?? '90',
+    AGENT_REASONING_ENABLED: this.env.AGENT_REASONING_ENABLED ?? '',
     INPUT_BUNDLE_URL: this.env.INPUT_BUNDLE_URL,
     ARTIFACT_ARCHIVE_URL: this.env.INPUT_BUNDLE_URL.replace(/\/internal\/bundle\/?$/, '/internal/artifacts'),
     BOT_ARTIFACTS: '/tmp/screenerx-artifacts', BOT_DATA: '/tmp/screenerx-input',

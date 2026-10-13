@@ -3,16 +3,76 @@
   "account_id": "016d4b7a71aa56787dec81605976ffd2",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-12",
-  "compatibility_flags": ["nodejs_compat"],
-  "vars": {"INPUT_BUNDLE_URL": "https://screenerx-telegram.akbaratt1.workers.dev/internal/bundle", "BOT_ALLOW_LIVE": "false", "BOT_AUTO_REFRESH": "true"},
-  "queues": {
-    "producers": [{"binding": "BOT_QUEUE", "queue": "screenerx-bot"}],
-    "consumers": [{"queue": "screenerx-bot", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 5, "dead_letter_queue": "screenerx-bot-dead"}]
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "INPUT_BUNDLE_URL": "https://screenerx-telegram.akbaratt1.workers.dev/internal/bundle",
+    "BOT_ALLOW_LIVE": "false",
+    "BOT_AUTO_REFRESH": "true",
+    "BOT_AGENT_ENABLED": "true",
+    "OPENROUTER_MODEL": "z-ai/glm-4.7-flash",
+    "AGENT_REASONING_ENABLED": "false",
+    "AGENT_MAX_ROUNDS": "6",
+    "AGENT_MAX_TOOL_CALLS": "12",
+    "AGENT_MAX_TOKENS": "1200",
+    "AGENT_TIMEOUT_SECONDS": "90"
   },
-  "r2_buckets": [{"binding": "REPORTS", "bucket_name": "screenerx-reports"}],
-  "containers": [{"class_name": "ResearchEngine", "image": "../../services/bot/Dockerfile", "image_build_context": "../..", "instance_type": "basic", "max_instances": 1}],
-  "durable_objects": {"bindings": [{"name": "ENGINE", "class_name": "ResearchEngine"}]},
-  "migrations": [{"tag": "v1", "new_sqlite_classes": ["ResearchEngine"]}],
-  "triggers": {"crons": ["* * * * *", "30 11 * * 1-5"]},
-  "observability": {"enabled": true}
+  "queues": {
+    "producers": [
+      {
+        "binding": "BOT_QUEUE",
+        "queue": "screenerx-bot"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "screenerx-bot",
+        "max_batch_size": 1,
+        "max_concurrency": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "screenerx-bot-dead"
+      }
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "REPORTS",
+      "bucket_name": "screenerx-reports"
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "ResearchEngine",
+      "image": "../../services/bot/Dockerfile",
+      "image_build_context": "../..",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ENGINE",
+        "class_name": "ResearchEngine"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "ResearchEngine"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *",
+      "30 11 * * 1-5"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
 }

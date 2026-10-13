@@ -31,6 +31,7 @@ HELP = ('screenerX - riset saham Indonesia\n\n'
         '/report BBNI - PDF satu saham\n'
         '/coverage - cakupan dan data yang belum tersedia\n'
         '/status - tanggal run dan status pengiriman\n\n'
+        '/ask Pertanyaan - agent OpenRouter jika mode agent diaktifkan\n\n'
         'Semua kode di universe dapat diperiksa, termasuk yang tidak masuk shortlist. '
         'Valuasi belum direview. Broker flow ON_HOLD.')
 
@@ -125,11 +126,18 @@ class ResearchBot:
         self.users=set(map(str,users)); self.chats=set(map(str,chats)); self.output=Path(output)
         self.open_groups=set(map(str,open_groups))
 
-    def prepare(self,text):
+    def prepare(self,text,refresh=True):
         args=text.strip().split(); command=args[0].split('@')[0].lower() if args else '/help'
         from .daily_refresh import load_latest
-        self.repository=load_latest(self.repository,os.getenv('BOT_LATEST_POINTER','output/daily-refresh/latest.json'))
+        if refresh: self.repository=load_latest(self.repository,os.getenv('BOT_LATEST_POINTER','output/daily-refresh/latest.json'))
         repository=self.repository
+        enabled=os.getenv('BOT_AGENT_ENABLED','false').lower()=='true'
+        if command in ('/ask','/agent') or (enabled and not text.lstrip().startswith('/')):
+            if not enabled: return [{'kind':'text','text':'Mode agent belum diaktifkan. Gunakan /stock KODE atau mode analisis langsung.'}]
+            from .agent import prepare_agent
+            prompt=text.split(maxsplit=1)[1] if command in ('/ask','/agent') and len(args)>1 else ('' if command in ('/ask','/agent') else text)
+            if not prompt.strip(): return [{'kind':'text','text':'Gunakan /ask Pertanyaan, contoh /ask Bandingkan teknikal dan fundamental BBCA dan BMRI.'}]
+            return prepare_agent(self,prompt)
         signature={'inputs':repository.report['input_files'],'config':repository.report['config_sha256'],
                    'as_of':repository.report['as_of'],'renderer':RENDERER_VERSION}
         run_key=hashlib.sha256(json.dumps(signature,sort_keys=True).encode()).hexdigest()[:16]
@@ -257,6 +265,8 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'as_of':bot.repository.report.get('as_of'),
                 'renderer_version':RENDERER_VERSION,
                 'open_group_count':len(bot.open_groups),
+                'agent_enabled':os.getenv('BOT_AGENT_ENABLED','false').lower()=='true',
+                'agent_configured':bool(os.getenv('OPENROUTER_API_KEY') and os.getenv('OPENROUTER_MODEL')),
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):

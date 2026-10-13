@@ -1,0 +1,67 @@
+name: Deploy ScreenX OpenRouter agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: OpenRouter model ID with tool calling support
+        required: true
+        type: string
+      reasoning:
+        description: Provider reasoning setting (only override for compatible models)
+        required: true
+        default: default
+        type: choice
+        options: [default, 'false', 'true']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenerx-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENROUTER_MODEL: ${{ inputs.model }}
+      AGENT_REASONING_ENABLED: ${{ inputs.reasoning }}
+      OPENROUTER_API_KEY: ${{ secrets.SCREENERX_OPENROUTER_API_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.SCREENERX_CLOUDFLARE_DEPLOY_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: '016d4b7a71aa56787dec81605976ffd2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: workers/bot/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate configuration without exposing credentials
+        run: |
+          python - <<'PY'
+          import os,re
+          if not os.getenv('OPENROUTER_API_KEY') or not os.getenv('CLOUDFLARE_API_TOKEN'):
+              raise SystemExit('Configure SCREENERX_OPENROUTER_API_KEY and SCREENERX_CLOUDFLARE_DEPLOY_TOKEN repository secrets')
+          if not re.fullmatch(r'[A-Za-z0-9_.:/-]+',os.getenv('OPENROUTER_MODEL','')):
+              raise SystemExit('Supply an explicit OpenRouter model ID supporting tools')
+          PY
+      - name: Test research tools and agent protocol
+        run: |
+          pip install -r requirements.txt -r requirements-bot.txt
+          python -m unittest tests.test_agent tests.test_analysis_modes tests.test_telegram_bot tests.test_reporting_tables tests.test_market tests.test_daily_refresh
+        env:
+          MPLBACKEND: Agg
+      - name: Install and validate Worker
+        working-directory: workers/bot
+        run: npm ci && npm run check && npm test
+      - name: Configure OpenRouter cloud secret
+        working-directory: workers/bot
+        run: printf '%s' "$OPENROUTER_API_KEY" | npx wrangler secret put OPENROUTER_API_KEY --config wrangler.agentic.jsonc
+      - name: Build and deploy agentic runtime
+        working-directory: workers/bot
+        run: npx wrangler deploy --config wrangler.agentic.jsonc --var "OPENROUTER_MODEL:$OPENROUTER_MODEL" --var "AGENT_REASONING_ENABLED:$AGENT_REASONING_ENABLED"
