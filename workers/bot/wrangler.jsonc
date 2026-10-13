@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-12",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": {"TELEGRAM_ALLOWED_USER_IDS": "", "TELEGRAM_ALLOWED_CHAT_IDS": "", "INPUT_BUNDLE_URL": "https://screenerx-telegram.akbaratt1.workers.dev/internal/bundle", "BOT_ALLOW_LIVE": "false", "BOT_AUTO_REFRESH": "true"},
+  "vars": {"INPUT_BUNDLE_URL": "https://screenerx-telegram.akbaratt1.workers.dev/internal/bundle", "BOT_ALLOW_LIVE": "false", "BOT_AUTO_REFRESH": "true"},
   "queues": {
     "producers": [{"binding": "BOT_QUEUE", "queue": "screenerx-bot"}],
     "consumers": [{"queue": "screenerx-bot", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 5, "dead_letter_queue": "screenerx-bot-dead"}]

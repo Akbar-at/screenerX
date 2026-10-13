@@ -13,4 +13,6 @@ test('Both user and chat must match the explicit allowlists', () => {
   assert.equal(authorized(update, '9', '-8'), false);
   assert.equal(authorized({update_id: '123'}, '7', '-8'), false);
   assert.equal(authorized(null, '7', '-8'), false);
+  assert.equal(authorized(update, undefined, '-8'), false);
+  assert.equal(authorized(update, '7', undefined), false);
 });
