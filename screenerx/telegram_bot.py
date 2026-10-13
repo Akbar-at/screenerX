@@ -19,6 +19,11 @@ from .reporting import RENDERER_VERSION,ReportRepository,narrative,render_stock,
 HELP = ('screenerX - riset saham Indonesia\n\n'
         '/top10 - ranking, gambar ringkasan dan rekomendasi deskriptif\n'
         '/stock BBNI - gambar chart dan kajian lengkap\n'
+        '/technical BBNI - teknikal saja\n'
+        '/fundamental BBNI - fundamental saja\n'
+        '/broker BBNI - broker flow (ON_HOLD)\n'
+        '/stock BBNI technical+fundamental - kombinasi mode\n'
+        '/stock BBNI technical+broker - kombinasi dengan broker\n'
         '/stock KODE live - lookup yfinance jika fitur live diaktifkan\n'
         '/chart BBNI - gambar laporan\n'
         '/valuation BBNI - DDM/RIM/EVA dan skenario\n'
@@ -146,10 +151,19 @@ class ResearchBot:
         if command=='/report' and len(args)==1:
             assets=render_top(repository,output)
             return [{'kind':'document','path':str(assets['pdf']),'caption':'Laporan riset lengkap | '+repository.report['as_of']}]
-        if command in ('/stock','/chart','/valuation','/report'):
-            if len(args) not in (2,3) or len(args)==3 and args[2].lower()!='live': return messages(f'Gunakan {command} KODE, contoh {command} BBNI.')
+        if command in ('/stock','/chart','/valuation','/report','/technical','/fundamental','/broker'):
+            if len(args)<2: return messages(f'Gunakan {command} KODE [technical+fundamental+broker] [live], contoh {command} BBNI.')
+            from .analysis_modes import parse_modes,select_analysis
+            options=args[2:]; live=any(x.lower()=='live' for x in options)
+            selections=[x for x in options if x.lower()!='live']
+            defaults={'/technical':'technical','/fundamental':'fundamental','/valuation':'fundamental','/broker':'broker'}
+            if len(selections)>1: return messages('Gunakan satu pilihan mode; gabungkan dengan +, contoh technical+fundamental.')
+            try: modes=parse_modes(selections[0] if selections else defaults.get(command,'all'))
+            except ValueError as exc: return messages(str(exc))
+            scoped=bool(selections or command in defaults)
+
             ticker,_=symbol_for(args[1]); bars=repository.bars(ticker)
-            if len(args)==3:
+            if live:
                 if os.getenv('BOT_ALLOW_LIVE','false').lower()!='true': return messages('Live lookup belum diaktifkan. Gunakan data run tersimpan terlebih dahulu.')
                 from .core_service import build_service
                 from .engine import day
@@ -158,14 +172,17 @@ class ResearchBot:
                 signature=hashlib.sha256(json.dumps(company,sort_keys=True,allow_nan=False).encode()).hexdigest()[:16]
                 output=self.output/signature
             else: company=repository.company(ticker)
+            if scoped:
+                company=select_analysis(company,modes)
+                output=self.output/hashlib.sha256((str(output.name)+'|'+ '+'.join(modes)).encode()).hexdigest()[:16]
             info=narrative(company)
-            assets=render_stock(company,bars,output)
+            assets=render_stock(company,bars if 'technical' in modes else [],output)
             image={'kind':'photo','path':str(assets['chart']),'caption':ticker+' | '+company['as_of']+' | '+info['label']}
-            if command=='/valuation':
+            if command=='/valuation' and not scoped:
                 sections=[s for s in info['sections'] if s[0] in ('Fundamental & valuasi','Risiko utama')]
                 return [image]+messages(f"{ticker} | {company['as_of']}\n\n"+'\n\n'.join(t+'\n'+b for t,b in sections))
             if command=='/report': return [image,{'kind':'document','path':str(assets['pdf']),'caption':ticker+' | '+company['as_of']}]
-            return [image]+(messages(info['text']) if command=='/stock' else [])
+            return [image]+(messages(info['text']) if command in ('/stock','/technical','/fundamental','/broker','/valuation') else [])
         return messages('Perintah belum tersedia.\n\n'+HELP)
 
     def accept(self,update):

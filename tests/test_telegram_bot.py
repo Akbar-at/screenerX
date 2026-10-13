@@ -165,6 +165,21 @@ class TelegramTests(unittest.TestCase):
                     self.assertEqual(result[0]['kind'],'photo')
                     self.assertEqual(result[0]['path'],str(assets['chart']))
 
+    def test_command_modes_scope_renderer_and_cache(self):
+        c={'ticker':'TEST','as_of':'2026-10-12','technical':None}
+        repository=MagicMock();repository.report={'input_files':{},'config_sha256':'abc','as_of':'2026-10-12'}
+        repository.company.return_value=c
+        bot=ResearchBot(repository,self.store,self.client,{'7'},{'-8'},self.temp.name)
+        assets={'chart':Path(self.temp.name)/'chart.png','pdf':Path(self.temp.name)/'report.pdf'}
+        with patch('screenerx.telegram_bot.render_stock',return_value=assets) as render:
+            paths=[]
+            for command,modes in [('/technical@ScreenX_idxbot TEST',('technical',)),('/fundamental TEST',('fundamental',)),('/broker TEST',('broker',)),('/stock TEST technical+broker',('technical','broker'))]:
+                result=bot.prepare(command)
+                self.assertEqual(render.call_args.args[0]['_analysis_modes'],modes)
+                self.assertEqual(result[0]['kind'],'photo');self.assertGreater(len(result),1)
+                paths.append(render.call_args.args[2])
+            self.assertEqual(len(set(paths)),4)
+
     def test_top10_attaches_a_chart_and_narrative_for_every_candidate(self):
         repository=MagicMock()
         repository.report={'input_files':{},'config_sha256':'abc','as_of':'2026-10-12','selected_count':2}

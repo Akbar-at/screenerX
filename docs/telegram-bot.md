@@ -100,3 +100,10 @@ The bot preserves message_thread_id on text, photo, and PDF outbox parts, so a f
 The Worker attaches the current cloud access settings to every authenticated engine processing request. This prevents a long-lived container from using stale group allowlists after a secret update. Authenticated POST /internal/engine/configure applies those settings immediately; GET /internal/engine/health reports open_group_count. These endpoints require ENGINE_SECRET and do not accept public configuration changes.
 
 After validating TELEGRAM_WEBHOOK_SECRET, the webhook returns success for ignored updates, including service events without text and commands from disallowed chats. Ignored updates are neither stored nor processed. Returning 403 for these legitimate Telegram deliveries causes repeated retries and a backlog; 403 is reserved for invalid webhook authentication.
+
+
+## Selectable analysis pipelines
+
+Use `/technical KODE`, `/fundamental KODE`, or `/broker KODE` for a single module. `/valuation KODE` also selects fundamental analysis. Use `/stock KODE technical+fundamental`, `/stock KODE technical+broker`, `/stock KODE fundamental+broker`, or `/stock KODE all` for combinations. The same optional mode selector works with `/chart KODE` and `/report KODE`. Commands can include the bot address in groups, for example `/stock@ScreenX_idxbot PTSN technical+fundamental`.
+
+Each selected pipeline evaluates stored production inputs independently and reports its own status. Missing financial models do not veto technical coverage; technical liquidity/trade gates do not veto financial estimates. Broker flow remains ON_HOLD until a real broker source is integrated. Fundamental reports omit trade levels and technical indicators. Images, text tables, PDFs, and cache identities include only the selected modules. Default `/stock KODE` and `/top10` retain the existing combined research report and shortlist; this change does not create separate mode-specific rankings or fetch broker data.

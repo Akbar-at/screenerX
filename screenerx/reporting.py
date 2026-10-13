@@ -15,7 +15,7 @@ GREEN = '#176148'
 INK = '#19352e'
 MUTED = '#61726b'
 RED = '#ba493e'
-RENDERER_VERSION = 'numerical-dashboard-v3'
+RENDERER_VERSION = 'selectable-analysis-v4'
 
 
 def money(value):
@@ -112,6 +112,7 @@ def recommendation(company):
 
 
 def narrative(company):
+    if company.get('_analysis_modes'): return scoped_narrative(company)
     ticker=company['ticker']; close=company.get('close'); t=company.get('technical') or {}
     v=company.get('valuation') or {}; plan=company.get('plan') or {}
     label,action=recommendation(company)
@@ -139,6 +140,71 @@ def narrative(company):
             'text':f"{ticker} | {company['as_of']} | {label}\n\n"+'\n\n'.join(title+'\n'+body for title,body in sections)}
 
 
+def scoped_narrative(company):
+    modes=company['_analysis_modes']; components=company['_analysis_components']
+    base=dict(company); base.pop('_analysis_modes'); full=narrative(base)
+    tables=dict(metric_tables(company)); selected=[]; sections=[]
+    titles={'technical':'Teknikal','fundamental':'Fundamental & valuasi','broker':'Broker flow'}
+    statuses=[(titles[m],components[m]['status']) for m in modes]
+    selected.append(('Status pipeline',statuses))
+    sections.append(('Pipeline dipilih',text_table(statuses)))
+    if 'technical' in modes:
+        selected.extend([(k,tables[k]) for k in ('Teknikal','Strategi & level')])
+        sections.extend([full['sections'][0],('Strategi & invalidasi',text_table(tables['Strategi & level'])+'\n\n'+components['technical']['assessment']+' Level OHLC bersyarat; periksa net R/R, likuiditas dan bid/offer sebelum entry.')])
+        costs=[row for row in tables['Likuiditas & asumsi biaya'] if row[0] not in ('Pajak efektif','Payout model','Skor riset')]
+        selected.append(('Likuiditas & biaya',costs));sections.append(('Likuiditas & biaya',text_table(costs)))
+    if 'fundamental' in modes:
+        selected.append(('Fundamental & valuasi',tables['Fundamental & valuasi']))
+        assumptions=[row for row in tables['Likuiditas & asumsi biaya'] if row[0] in ('Pajak efektif','Payout model')]
+        selected.append(('Asumsi fundamental',assumptions))
+        sections.extend([full['sections'][1],('Asumsi fundamental',text_table(assumptions)+'\n\n'+components['fundamental']['assessment'])])
+    if 'broker' in modes:
+        selected.append(('Broker flow',[('Status','ON_HOLD'),('Sumber','Belum terintegrasi')]))
+        sections.append(('Broker flow',text_table(selected[-1][1])+'\n\nON_HOLD. '+components['broker']['assessment']))
+    statuses_only=[c['status'] for c in components.values()]
+    label='ON_HOLD' if modes==('broker',) else 'ANALISIS PARSIAL' if any(x in ('UNAVAILABLE','PARTIAL_ESTIMATES','ON_HOLD') for x in statuses_only) else 'ANALISIS TERSEDIA'
+    action=' | '.join(titles[m]+': '+components[m]['assessment'] for m in modes)
+    return {'ticker':company['ticker'],'as_of':company['as_of'],'label':label,'action':action,
+            'sections':sections,'tables':selected,
+            'text':f"{company['ticker']} | {company['as_of']} | {label}\nMode: {' + '.join(modes)}\n\n"+'\n\n'.join(t+'\n'+b for t,b in sections)}
+
+
+def scoped_figure(company,bars):
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    info=scoped_narrative(company); technical='technical' in company['_analysis_modes']
+    count=len(info['tables']); rows=math.ceil(count/2)
+    height=3.5+rows*3.5+(4 if technical else 0)
+    fig=plt.figure(figsize=(10,height),facecolor='white')
+    fig.text(.055,1-.35/height,'screenerX | '+company['ticker'],fontsize=22,color=GREEN,weight='bold',va='top')
+    fig.text(.055,1-.85/height,company['as_of']+' | '+' + '.join(company['_analysis_modes']),fontsize=11,color=INK,va='top')
+    fig.text(.055,1-1.2/height,info['label'],fontsize=12,color=RED,va='top')
+    top=1-1.75/height
+    if technical:
+        ax=fig.add_axes([.08,top-2.7/height,.85,2.7/height]);view=bars[-90:]
+        if view:
+            for i,b in enumerate(view):
+                color=GREEN if b['close']>=b['open'] else RED
+                ax.plot([i,i],[b['low'],b['high']],color=color,lw=.8)
+                ax.add_patch(Rectangle((i-.3,min(b['open'],b['close'])),.6,max(abs(b['close']-b['open']),b['close']*.0005),facecolor=color))
+            offset=len(bars)-len(view)
+            for period in (20,60):
+                ax.plot(range(len(view)),[sum(b['close'] for b in bars[j-period+1:j+1])/period if j>=period-1 else None for j in range(offset,len(bars))],label=f'SMA{period}')
+            marks=sorted(set([0,len(view)//2,len(view)-1]));ax.set_xticks(marks,[view[i]['date'].strftime('%d/%m') for i in marks])
+            ax.legend(fontsize=8);ax.grid(alpha=.15)
+        else: ax.text(.5,.5,'Riwayat harga belum tersedia',transform=ax.transAxes,ha='center')
+        top-=3.25/height
+    for i,(title,data) in enumerate(info['tables']):
+        x=.055+(i%2)*.455;y=top-(i//2)*3.5/height
+        fig.text(x,y,title,fontsize=11,color=GREEN,weight='bold',va='top')
+        panel=fig.add_axes([x,y-3.1/height,.435,2.8/height]);panel.axis('off')
+        table=panel.table(cellText=data,colLabels=['Metrik','Nilai'],colWidths=[.53,.47],cellLoc='left',bbox=[0,0,1,1]);table.auto_set_font_size(False);table.set_fontsize(10)
+        for (r,c),cell in table.get_celld().items():
+            cell.set_facecolor(GREEN if r==0 else '#eef5f0' if r%2 else '#f8faf9');cell.set_edgecolor('white');cell.get_text().set_color('white' if r==0 else INK)
+    fig.text(.055,.8/height,textwrap.fill(info['action'],width=115),fontsize=9,color=INK,va='top')
+    return fig
+
+
 class ReportRepository:
     def __init__(self,run_dir,prices_path):
         self.run_dir=Path(run_dir)
@@ -158,6 +224,7 @@ class ReportRepository:
 
 
 def figure(company,bars):
+    if company.get('_analysis_modes'): return scoped_figure(company,bars)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
