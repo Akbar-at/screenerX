@@ -56,6 +56,13 @@ class TelegramTests(unittest.TestCase):
             client._send(-100777000123,{'kind':kind,'text':'test','path':str(path),'message_thread_id':2})
             self.assertEqual(client.request.call_args.args[1]['message_thread_id'],2)
 
+    def test_ordinary_group_conversation_is_acknowledged_without_bot_replies(self):
+        item=update(user=99,chat=-100777000123,text='ordinary conversation')
+        item['message']['chat']['type']='supergroup';self.bot.open_groups={'-100777000123'}
+        self.assertTrue(self.bot.accept(item));self.assertEqual(self.store.counts(),{})
+        self.store.accept(item)
+        self.assertEqual(self.bot.process(1),'DONE');self.client.send.assert_not_called()
+
     def test_duplicate_update_never_resends_sent_parts(self):
         self.assertTrue(self.bot.accept(update()))
         self.assertEqual(self.bot.process(1),'DONE')

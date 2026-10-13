@@ -90,3 +90,9 @@ Use /stock BBNI, /chart BBNI, /valuation BBNI, /top10, or /report BBNI. Initial 
 The live numerical-dashboard-v3 renderer uses one metric table source for both Telegram text and images. /stock, /chart, /valuation, /report, and each /top10 stock image include the full chart plus technical, valuation/scenario, trade-level, and liquidity/cost tables. The image is no longer cropped to price axes alone. Telegram text renders fixed-width tables using escaped HTML pre blocks. Missing models are marked unavailable, and non-applicable bank EVA is marked Tidak berlaku. Fee and slippage percentages retain two decimal places.
 
 The dashboard was previewed with real PTSN and BBNI data, and all eight shortlisted companies were rendered into dashboard PNGs and a combined PDF. Tests check agreement of every table label/value across image and text, missing-model handling, percentage precision, complete image export, and safe Telegram HTML. The deployed container health check confirms numerical-dashboard-v3.
+
+## Group access and forum topics
+
+TELEGRAM_OPEN_GROUP_IDS enables commands from every member of only the explicitly configured Telegram groups/supergroups. Existing private user/chat allowlists remain active. Other groups and private chats remain restricted. Keep real group IDs in Cloudflare secrets and ignored .env.bot; public test fixtures use fictional IDs.
+
+The bot preserves message_thread_id on text, photo, and PDF outbox parts, so a forum command receives replies in its original topic. Ordinary group conversation is acknowledged without generating replies. Group commands can explicitly address the bot, for example /stock@ScreenX_idxbot PTSN, with Telegram privacy mode enabled.
