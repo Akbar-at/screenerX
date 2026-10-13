@@ -2,8 +2,10 @@
 import argparse
 import hashlib
 import hmac
+import html
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
@@ -12,7 +14,7 @@ from pathlib import Path
 from .bot_store import BotStore
 from .engine import InputError
 from .fetch import symbol_for
-from .reporting import ReportRepository,narrative,render_stock,render_top
+from .reporting import RENDERER_VERSION,ReportRepository,narrative,render_stock,render_top
 
 HELP = ('screenerX - riset saham Indonesia\n\n'
         '/top10 - ranking, gambar ringkasan dan rekomendasi deskriptif\n'
@@ -39,6 +41,14 @@ def chunks(text,limit=3800):
         buffer+=( '\n\n' if buffer else '')+paragraph
     if buffer: result.append(buffer)
     return result
+
+
+def telegram_html(text):
+    """Render fixed-width table blocks while escaping every data-derived string."""
+    parts=re.split(r'(```.*?```)',text,flags=re.S)
+    return ''.join('<pre>'+html.escape(part[3:-3].strip('\n'),quote=False)+'</pre>'
+                   if part.startswith('```') and part.endswith('```') else html.escape(part,quote=False)
+                   for part in parts)
 
 
 def authorized(update,users,chats):
@@ -86,7 +96,10 @@ class TelegramClient:
 
     def _send(self,chat_id,message):
         kind=message['kind']
-        if kind=='text': return self.request('sendMessage',{'chat_id':chat_id,'text':message['text']})
+        if kind=='text':
+            payload={'chat_id':chat_id,'text':message['text']}
+            if message.get('parse_mode'): payload['parse_mode']=message['parse_mode']
+            return self.request('sendMessage',payload)
         field='photo' if kind=='photo' else 'document'
         path=Path(message['path'])
         with path.open('rb') as stream:
@@ -108,10 +121,10 @@ class ResearchBot:
         self.repository=load_latest(self.repository,os.getenv('BOT_LATEST_POINTER','output/daily-refresh/latest.json'))
         repository=self.repository
         signature={'inputs':repository.report['input_files'],'config':repository.report['config_sha256'],
-                   'as_of':repository.report['as_of'],'renderer':'ihsf-inspired-chart-v2'}
+                   'as_of':repository.report['as_of'],'renderer':RENDERER_VERSION}
         run_key=hashlib.sha256(json.dumps(signature,sort_keys=True).encode()).hexdigest()[:16]
         output=self.output/run_key
-        def messages(body): return [{'kind':'text','text':part} for part in chunks(body)]
+        def messages(body): return [{'kind':'text','text':telegram_html(part),'parse_mode':'HTML'} for part in chunks(body)]
         if command in ('/start','/help'): return messages(HELP)
         if command in ('/top','/top10'):
             assets=render_top(repository,output)
@@ -204,6 +217,7 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
         def do_GET(self):
             if self.path=='/health': return self.respond(200,{'status':'ok',
                 'as_of':bot.repository.report.get('as_of'),
+                'renderer_version':RENDERER_VERSION,
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):

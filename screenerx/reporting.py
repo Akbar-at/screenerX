@@ -2,6 +2,7 @@
 import argparse
 import json
 import math
+import re
 import textwrap
 import threading
 from pathlib import Path
@@ -14,6 +15,7 @@ GREEN = '#176148'
 INK = '#19352e'
 MUTED = '#61726b'
 RED = '#ba493e'
+RENDERER_VERSION = 'numerical-dashboard-v3'
 
 
 def money(value):
@@ -22,6 +24,73 @@ def money(value):
 
 def percent(value):
     return 'belum tersedia' if value is None else f'{value:.1%}'
+
+
+def number(value,places=2,suffix=''):
+    return '-' if value is None else f'{value:.{places}f}'+suffix
+
+
+def metric_tables(company):
+    """One formatted data source shared by Telegram tables and the chart image."""
+    t=company.get('technical') or {}; v=company.get('valuation') or {}; p=company.get('plan') or {}
+    def price(value): return '-' if value is None else money(value)
+    def pct(value,places=1): return '-' if value is None else f'{value:.{places}%}'
+    def model(method):
+        status=company.get('models',{}).get(method,{}).get('status')
+        if status=='NOT_APPLICABLE': return 'Tidak berlaku'
+        return price(v.get(method)) if v.get(method) is not None else 'Tidak tersedia'
+    minimum=p.get('minimum_net_rr')
+    if minimum is None:
+        match=next((re.search(r'Estimated net reward/risk below ([0-9.]+)',reason)
+                    for reason in p.get('risk_reasons',[]) if re.search(r'Estimated net reward/risk below ([0-9.]+)',reason)),None)
+        if match: minimum=float(match.group(1))
+    liquidity=((company.get('quality') or {}).get('liquidity_floor') or {}).get('evidence') or {}
+    costs=p.get('cost_assumptions') or {}
+    required=company.get('required_models') or []
+    model_count=sum(v.get(m) is not None for m in required)
+    return [
+        ('Teknikal',[
+            ('Close',price(company.get('close'))),('SMA20',price(t.get('sma20'))),('SMA60',price(t.get('sma60'))),
+            ('MACD',number(t.get('macd'))),('Signal MACD',number(t.get('macd_signal'))),
+            ('RSI',number(t.get('rsi'),1)),('Stoch K',number(t.get('stoch_k'),1)),('Stoch D',number(t.get('stoch_d'),1)),
+            ('Volume / median',number(t.get('volume_multiple'),2,'x')),('ATR',number(t.get('atr'))),('Return 20 sesi',pct(t.get('return20')))]),
+        ('Fundamental & valuasi',[
+            ('DDM',model('ddm')),('RIM',model('rim')),('EVA',model('eva')),('Rata-rata model',price(v.get('fair_value'))),
+            ('MOS',pct(v.get('current_mos'))),('Dispersi',pct(v.get('dispersion'))),
+            ('Bear',price(v.get('bear_value'))),('Base',price(v.get('fair_value'))),('Bull',price(v.get('bull_value'))),
+            ('Model tersedia',f'{model_count}/{len(required)}' if required else '-'),
+            ('Laporan tahunan',v.get('statement_date') or '-'),
+            ('Kurs '+v.get('financial_currency','')+'/IDR' if v.get('financial_currency') else 'Kurs ke IDR',number(v.get('fx_rate'),2)),('Tanggal kurs',v.get('fx_date') or '-')]),
+        ('Strategi & level',[
+            ('Entry',price(p.get('entry_price'))),('TP1',price(p.get('tp1_price'))),('TP2',price(p.get('tp2_price'))),
+            ('Stop',price(p.get('stop_loss_price'))),('Support',price(p.get('support'))),('Resistance',price(p.get('resistance'))),
+            ('Gross R/R',number(p.get('gross_rr'),2,'x')),('Net R/R',number(p.get('net_rr'),2,'x')),
+            ('R/R minimum',number(minimum,2,'x'))]),
+        ('Likuiditas & asumsi biaya',[
+            ('Median transaksi',price(company.get('median_turnover_idr'))),('Minimum profil',price(liquidity.get('minimum'))),
+            ('Fee beli',pct(costs.get('buy_fee'),2)),('Fee jual',pct(costs.get('sell_fee'),2)),
+            ('Slippage entry',pct(costs.get('entry_slippage'),2)),('Slippage target',pct(costs.get('target_slippage'),2)),
+            ('Slippage stop',pct(costs.get('stop_slippage'),2)),('Pajak efektif',pct(v.get('tax_rate'),2)),
+            ('Payout model',pct(v.get('payout_ratio'))),('Skor riset',number((company.get('score') or {}).get('total'),1,'/100'))])]
+
+
+def text_table(rows):
+    label_width=max(len('Metrik'),max(len(label) for label,value in rows))
+    value_width=max(len('Nilai'),max(len(str(value)) for label,value in rows))
+    lines=[f"{'Metrik':<{label_width}} | {'Nilai':>{value_width}}",'-'*label_width+'-+-'+'-'*value_width]
+    lines.extend(f'{label:<{label_width}} | {str(value):>{value_width}}' for label,value in rows)
+    return '```\n'+'\n'.join(lines)+'\n```'
+
+
+def risk_text(reason):
+    translations={
+        'Liquidity below threshold or missing':'Likuiditas di bawah batas profil atau belum tersedia.',
+        'Missing an applicable valuation model':'Ada model valuasi yang belum tersedia.',
+        'Incomplete sensitivity for applicable models':'Skenario sensitivitas model belum lengkap.',
+        'No positive aligned annual common dividends':'Dividen tahunan positif yang selaras belum tersedia.',
+    }
+    if reason.startswith('Estimated net reward/risk below '): return 'Net R/R belum memenuhi minimum profil.'
+    return translations.get(reason,reason)
 
 
 def recommendation(company):
@@ -46,44 +115,27 @@ def narrative(company):
     ticker=company['ticker']; close=company.get('close'); t=company.get('technical') or {}
     v=company.get('valuation') or {}; plan=company.get('plan') or {}
     label,action=recommendation(company)
-    sections=[]
-    if t and close is not None and all(t.get(k) is not None for k in ('sma20','sma60','macd','macd_signal','rsi','stoch_k','stoch_d','volume_multiple')):
+    tables=dict(metric_tables(company))
+    if t and close is not None and all(t.get(k) is not None for k in ('sma20','sma60','macd','macd_signal')):
         relation='di atas' if close>t['sma20'] else 'di bawah atau sama dengan'
         trend='menguat' if t['sma20']>t['sma60'] else 'belum menguat'
         momentum='di atas' if t['macd']>t['macd_signal'] else 'di bawah atau sama dengan'
-        sections.append(('Teknikal & struktur harga',
-            f"{ticker} ditutup pada {money(close)}, {relation} SMA20 {money(t['sma20'])}. "
-            f"SMA20 dibanding SMA60 {money(t['sma60'])} menunjukkan tren {trend}. "
-            f"MACD {t['macd']:.2f} berada {momentum} signal {t['macd_signal']:.2f}; "
-            f"RSI {t['rsi']:.1f}, stochastic K/D {t['stoch_k']:.1f}/{t['stoch_d']:.1f}, "
-            f"dan volume {t['volume_multiple']:.2f}x median sebelumnya. "
-            f"Support/resistance rolling: {money(plan.get('support'))} / {money(plan.get('resistance'))}."))
-    else:
-        sections.append(('Teknikal & struktur harga','Riwayat harga/indikator belum memadai untuk analisis teknikal yang lengkap.'))
-    if v:
-        methods=', '.join(f'{m.upper()} {money(v[m])}' for m in ('ddm','rim','eva') if v.get(m) is not None)
-        sections.append(('Fundamental & valuasi',
-            f"Laporan tahunan {v['statement_date']} dari {v['financial_provider']}: {methods or 'model belum tersedia'}. "
-            f"Rata-rata model {money(v.get('fair_value'))}; margin of safety {percent(v.get('current_mos'))}; "
-            f"dispersi {percent(v.get('dispersion'))}. Skenario bear/base/bull: "
-            f"{money(v.get('bear_value'))} / {money(v.get('fair_value'))} / {money(v.get('bull_value'))}. "
-            'Ini estimasi dengan asumsi pertumbuhan dan tingkat diskonto, bukan target harga yang dijamin.'))
-    else:
-        reasons='; '.join(x['reason'] for x in company.get('missing_inputs',[]) if x['check'] in ('aligned_financials','financial_evidence'))
-        sections.append(('Fundamental & valuasi','Valuasi belum tersedia. '+(reasons or 'Data laporan keuangan yang cocok belum tersedia.')))
-    sections.append(('Broker flow', 'ON_HOLD. Data transaksi broker belum terintegrasi; akumulasi/distribusi asing atau institusi belum dapat dikonfirmasi.'))
-    rr=plan.get('net_rr')
-    sections.append(('Strategi & invalidasi',
-        action+' '+f"Level indikatif entry {money(plan.get('entry_price'))}, TP1 {money(plan.get('tp1_price'))}, "
-        f"TP2 {money(plan.get('tp2_price'))}, stop {money(plan.get('stop_loss_price'))}. "
-        f"Net R/R {f'{rr:.2f}x' if rr is not None else 'belum tersedia'}. "
-        'Level dihitung dari OHLC historis dan perlu dihitung ulang jika harga berubah. '
-        'Rencana gugur jika harga melewati stop; level ini bukan bukti bahwa entry telah terjadi.'))
+        technical=f'Harga {relation} rata-rata pendek; struktur rata-rata pendek/panjang {trend}. MACD {momentum} signal.'
+    else: technical='Riwayat harga/indikator belum memadai untuk analisis teknikal yang lengkap.'
+    valuation=(f"Sumber: {v.get('financial_provider','yfinance')}; angka model dalam IDR per saham. "
+               'Estimasi memakai asumsi pertumbuhan dan diskonto; skenario bukan target yang dijamin.') if v else 'Valuasi belum tersedia; data laporan keuangan yang cocok belum lengkap.'
+    sections=[
+        ('Teknikal & struktur harga',text_table(tables['Teknikal'])+'\n\n'+technical),
+        ('Fundamental & valuasi',text_table(tables['Fundamental & valuasi'])+'\n\n'+valuation),
+        ('Broker flow','ON_HOLD. Data transaksi broker belum terintegrasi; akumulasi/distribusi asing atau institusi belum dapat dikonfirmasi.'),
+        ('Strategi & invalidasi',text_table(tables['Strategi & level'])+'\n\n'+action+' Level berasal dari OHLC historis dan perlu dihitung ulang jika harga berubah. Rencana gugur jika harga melewati stop; ini bukan bukti entry telah terjadi.'),
+        ('Likuiditas & asumsi biaya',text_table(tables['Likuiditas & asumsi biaya'])+'\n\nFee dan slippage mengikuti asumsi tersimpan; payout mengikuti input model. Tarif broker belum diverifikasi.')]
     issues=company.get('failed_quality_checks',[])+company.get('missing_inputs',[])
-    risks=[x['reason'] for x in issues][:3]+plan.get('risk_reasons',[])[:2]
+    risks=[risk_text(x['reason']) for x in issues][:3]+[risk_text(x) for x in plan.get('risk_reasons',[])[:2]]
     risks+=['Valuasi belum direview; corporate actions dan bid/offer belum diverifikasi.']
     sections.append(('Risiko utama',' '.join(dict.fromkeys(risks))))
     return {'ticker':ticker,'as_of':company['as_of'],'label':label,'action':action,'sections':sections,
+            'tables':metric_tables(company),
             'text':f"{ticker} | {company['as_of']} | {label}\n\n"+'\n\n'.join(title+'\n'+body for title,body in sections)}
 
 
@@ -111,16 +163,21 @@ def figure(company,bars):
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
     from matplotlib.ticker import FuncFormatter
-    fig=plt.figure(figsize=(10,14),facecolor='white')
+    fig=plt.figure(figsize=(10,16),facecolor='white')
     info=narrative(company); t=company.get('technical') or {}; v=company.get('valuation') or {}; plan=company.get('plan') or {}
-    fig.text(.06,.967,'screenerX',fontsize=22,fontweight='bold',color=GREEN)
-    fig.text(.94,.973,'RISET SAHAM INDONESIA',ha='right',fontsize=10,color=MUTED)
-    fig.text(.94,.955,company['as_of']+'  |  Yahoo / yfinance',ha='right',fontsize=9,color=MUTED)
-    fig.text(.06,.922,company['ticker']+'  |  '+money(company.get('close')),fontsize=24,fontweight='bold',color=INK)
-    fig.text(.06,.899,info['label'],fontsize=12,fontweight='bold',color=RED if 'TUNGGU' in info['label'] else GREEN)
-    score=company.get('score')
-    fig.text(.94,.922,f"Skor riset {score['total']:.1f}/100" if score else 'Tidak masuk ranking',ha='right',fontsize=12,color=INK)
-    ax=fig.add_axes([.075,.637,.61,.235]); volume=fig.add_axes([.075,.589,.61,.04],sharex=ax)
+    fig.text(.055,.973,'screenerX',fontsize=23,fontweight='bold',color=GREEN)
+    fig.text(.945,.976,'RISET SAHAM INDONESIA',ha='right',fontsize=10,color=MUTED)
+    fig.text(.945,.960,company['as_of']+' | Yahoo / yfinance',ha='right',fontsize=10,color=INK)
+    fig.text(.055,.930,company['ticker'],fontsize=31,fontweight='bold',color=INK)
+    fig.text(.055,.907,info['label'],fontsize=13,fontweight='bold',color=RED if info['label']!='PANTAU BREAKOUT' else GREEN)
+    cards=[('CLOSE',money(company.get('close'))),('MARGIN OF SAFETY',percent(v.get('current_mos'))),
+           ('NET R/R',number(plan.get('net_rr'),2,'x')),('SKOR RISET',number((company.get('score') or {}).get('total'),1,'/100'))]
+    for i,(title,value) in enumerate(cards):
+        x=.055+i*.225
+        fig.add_artist(Rectangle((x,.852),.215,.046,transform=fig.transFigure,facecolor='#eef5f0',edgecolor='none'))
+        fig.text(x+.010,.882,title,fontsize=8,color=MUTED)
+        fig.text(x+.010,.863,value,fontsize=16,fontweight='bold',color=INK)
+    ax=fig.add_axes([.085,.655,.85,.184]); volume=fig.add_axes([.085,.612,.85,.033],sharex=ax)
     view=bars[-90:]; ax.set_facecolor('#f6f9f7')
     if view:
         for i,b in enumerate(view):
@@ -133,12 +190,12 @@ def figure(company,bars):
         for period,color in ((20,'#d49723'),(60,'#687eab')):
             means=[sum(b['close'] for b in bars[max(0,j-period+1):j+1])/period if j>=period-1 else None for j in range(offset,len(bars))]
             ax.plot(range(len(view)),means,color=color,linewidth=1.2,label=f'SMA{period}')
-        for key,label,color in (('entry_price','Entry',GREEN),('stop_loss_price','Stop',RED),('tp1_price','TP1','#5668a2')):
+        for key,label,color in (('entry_price','Entry',GREEN),('stop_loss_price','Stop',RED),('tp1_price','TP1','#5668a2'),('tp2_price','TP2','#956ab1')):
             value=plan.get(key)
             lo=min(b['low'] for b in view); hi=max(b['high'] for b in view)
             if value is not None and lo*.9<=value<=hi*1.1:
                 ax.axhline(value,color=color,linestyle='--',linewidth=.8,label=f'{label} {value:,.0f}')
-        marks=list(range(0,len(view),max(1,len(view)//5)))
+        marks=sorted(set(list(range(0,len(view),max(1,len(view)//5)))+[len(view)-1]))
         volume.set_xticks(marks,[view[i]['date'].strftime('%d/%m') for i in marks],fontsize=8)
         ax.legend(loc='upper left',fontsize=7,framealpha=.9,ncol=2)
     else:
@@ -149,27 +206,22 @@ def figure(company,bars):
     volume.tick_params(axis='y',left=False,labelleft=False); volume.set_ylabel('Vol',fontsize=7)
     for axis in (ax,volume):
         for spine in axis.spines.values(): spine.set_visible(False)
-    x=.72; y=.858
-    fig.text(x,y,'VALUASI & LEVEL',fontsize=10,fontweight='bold',color=GREEN)
-    def model_label(method):
-        if company.get('models',{}).get(method,{}).get('status')=='NOT_APPLICABLE': return 'Tidak berlaku'
-        return money(v.get(method))
-    lines=[('DDM',model_label('ddm')),('RIM',model_label('rim')),('EVA',model_label('eva')),
-           ('Rata-rata',money(v.get('fair_value'))),('MOS',percent(v.get('current_mos'))),
-           ('Entry',money(plan.get('entry_price'))),('TP1 / TP2',money(plan.get('tp1_price'))+' / '+money(plan.get('tp2_price'))),
-           ('Stop',money(plan.get('stop_loss_price'))),('Net R/R',f"{plan['net_rr']:.2f}x" if plan.get('net_rr') is not None else 'belum tersedia')]
-    for label,value in lines:
-        y-=.026
-        fig.text(x,y,label,fontsize=8,color=MUTED)
-        fig.text(x,y-.012,value,fontsize=9,color=INK)
-    y=.548
-    for title,body in info['sections']:
-        fig.text(.06,y,title.upper(),fontsize=9.5,fontweight='bold',color=GREEN)
-        wrapped=textwrap.fill(body,width=114)
-        fig.text(.06,y-.016,wrapped,fontsize=8.6,color=INK,va='top',linespacing=1.55)
-        y-=.022+.0145*len(wrapped.splitlines())
-    fig.text(.06,.028,'ESTIMASI BELUM DIREVIEW  |  BROKER FLOW ON_HOLD  |  RISET BERSYARAT',fontsize=8,color=RED)
-    fig.text(.94,.015,'screenerX Research',ha='right',fontsize=8,color=MUTED)
+    for (title,rows),(x,y,width,height) in zip(info['tables'],[
+        (.055,.344,.435,.230),(.510,.344,.435,.230),(.055,.094,.435,.230),(.510,.094,.435,.230)]):
+        fig.text(x,y+height+.010,title.upper(),fontsize=11,fontweight='bold',color=GREEN)
+        panel=fig.add_axes([x,y,width,height]); panel.axis('off')
+        table=panel.table(cellText=rows,colLabels=['Metrik','Nilai'],cellLoc='left',colLoc='left',
+                          colWidths=[.53,.47],bbox=[0,0,1,1])
+        table.auto_set_font_size(False); table.set_fontsize(10.5)
+        for (row,col),cell in table.get_celld().items():
+            cell.set_edgecolor('white'); cell.set_linewidth(1)
+            cell.set_facecolor(GREEN if row==0 else '#eef5f0' if row%2 else '#f8faf9')
+            cell.get_text().set_color('white' if row==0 else INK)
+            if col==1 and row: cell.get_text().set_ha('right')
+            if row==0: cell.get_text().set_fontweight('bold')
+    fig.text(.055,.074,textwrap.fill(info['action'],width=105),fontsize=10,color=INK,va='top',linespacing=1.3)
+    fig.text(.055,.028,'ESTIMASI BELUM DIREVIEW | BROKER FLOW ON_HOLD | LEVEL BERSYARAT',fontsize=9,color=RED)
+    fig.text(.945,.015,'Harga/model: Rp per saham | Biaya & payout: input model',ha='right',fontsize=8,color=MUTED)
     return fig
 
 
@@ -200,15 +252,8 @@ def summary_figure(report):
 
 
 def save_chart(fig,company,bars,path):
-    """Export native chart axes, including full price labels and the final session."""
-    from matplotlib.transforms import Bbox
-    for label in list(fig.texts): label.remove()
-    fig.axes[0].set_title(f"{company['ticker']} | {company['as_of']} | Daily OHLCV",loc='left',fontsize=12,pad=12)
-    view=bars[-90:]
-    if view:
-        marks=sorted(set(list(range(0,len(view),max(1,len(view)//5)))+[len(view)-1]))
-        fig.axes[1].set_xticks(marks,[view[i]['date'].strftime('%d/%m') for i in marks],fontsize=8)
-    fig.savefig(path,dpi=180,bbox_inches=Bbox.from_bounds(0,8.0,7.0,4.55),facecolor='white')
+    """The Telegram chart keeps every numerical table alongside the price axes."""
+    fig.savefig(path,dpi=160,facecolor='white')
 
 
 def render_stock(company,bars,output):
