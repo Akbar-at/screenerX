@@ -82,11 +82,13 @@ class DailyRefresh:
                 # Cached FX still has to pass the engine's date/age/currency checks.
                 pass
             result=market_run(folder/'market',asof=session,workers=2,snapshots=self.snapshots,
-                              financial_provider='yfinance',fx_snapshot=fx_path)
+                              financial_provider='yfinance',fx_snapshot=fx_path,previous_prices=self.repository.prices_path)
             if result['price_count']/result['universe_count']<.80:
                 raise InputError('Price coverage below 80%; previous published run retained')
             run_dir=Path(result['report_path']).parent; prices=folder/'market/prices.csv'
             fresh=ReportRepository(run_dir,prices)
+            if self.repository.report.get('coverage_complete_count',0)>0 and fresh.report.get('coverage_complete_count',0)==0:
+                raise InputError('Complete research coverage collapsed to zero; previous published run retained')
             from .reporting import render_top
             render_top(fresh,folder/'images')
             if self.publish_url:

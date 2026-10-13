@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .ajaib import BASE, result_of
-from .engine import InputError, day, file_hash, write_csv
+from .engine import InputError, day, file_hash, write_csv,load_prices
 from .fetch import FIELDS, fetch_json, fetch_yfinance, parse_chart, symbol_for
 from .production import latest_session
 from .core_service import build_service
@@ -63,7 +63,22 @@ def collect_one(ticker, asof, folder):
         return [], {'ticker': ticker, 'status': 'UNAVAILABLE', 'reason': str(exc)}
 
 
-def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_provider='wsj', fx_snapshot=None):
+def merge_history(fresh,previous,asof):
+    """Retain real missing historical candles; fresh observations win on overlap."""
+    merged={}
+    for ticker,bars in previous.items():
+        for bar in bars:
+            date=bar['date'] if hasattr(bar['date'],'isoformat') else day(bar['date'],'date')
+            if date<asof: merged[(ticker,date)]={**bar,'ticker':ticker,'date':date.isoformat()}
+    retained=set(merged)
+    for bar in fresh:
+        date=bar['date'] if hasattr(bar['date'],'isoformat') else day(bar['date'],'date')
+        if date<=asof:
+            key=(bar['ticker'],date);merged[key]=bar;retained.discard(key)
+    return [merged[key] for key in sorted(merged)],len(retained)
+
+
+def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_provider='wsj', fx_snapshot=None,previous_prices=None):
     if financial_provider not in ('wsj','yfinance'):
         raise InputError('Unsupported financial provider')
     if wsj_pages and financial_provider!='wsj':
@@ -116,6 +131,9 @@ def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_
                 save()
                 print(f'Prices assessed: {n}/{len(tickers)}', flush=True)
     rows.sort(key=lambda r: (r['ticker'], str(r['date'])))
+    if previous_prices:
+        rows,retained=merge_history(rows,load_prices(previous_prices),asof)
+        state['retained_history']={'rows':retained,'source_sha256':file_hash(previous_prices)}
     del pending
     write_csv(output / 'prices.csv', rows, FIELDS)
     del rows
@@ -124,6 +142,7 @@ def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_
     service = build_service(output / 'prices.csv', asof, snapshot_dir=snapshots, wsj_pages=wsj_pages,
                             financial_provider=financial_provider,fx_path=fx_snapshot)
     report = service.screen(tickers)
+    if previous_prices: report['input_files'][str(Path(previous_prices).resolve())]=file_hash(previous_prices)
     report['universe_source'] = state['source']
     report['official_idx_completeness_verified'] = False
     report_folder = output / 'core'

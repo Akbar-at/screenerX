@@ -69,6 +69,16 @@ class DailyRefreshTests(unittest.TestCase):
         self.assertEqual(json.loads((self.root/'latest.json').read_text())['marker'],'previous')
         self.callback.assert_not_called()
 
+    def test_zero_complete_coverage_cannot_replace_a_healthy_run(self):
+        self.repository.report['coverage_complete_count']=100
+        atomic_json(self.root/'latest.json',{'as_of':'2026-10-12','marker':'previous'})
+        a,b,c,d,e=self.providers()
+        with a,b,c,d as render,e as repository:
+            repository.return_value.report={'coverage_complete_count':0}
+            result=self.manager.run(now=NOW)
+            self.assertEqual(result['status'],'RETRY');render.assert_not_called()
+        self.assertEqual(json.loads((self.root/'latest.json').read_text())['marker'],'previous')
+
     def test_holiday_uses_observed_session_and_skips_same_report(self):
         with patch('screenerx.production.latest_session',return_value=(date(2026,10,12),{})),patch('screenerx.market.run') as market:
             self.assertEqual(self.manager.run(now=NOW)['status'],'SKIPPED')
