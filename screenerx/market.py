@@ -66,15 +66,20 @@ def collect_one(ticker, asof, folder):
 def merge_history(fresh,previous,asof):
     """Retain real missing historical candles; fresh observations win on overlap."""
     merged={}
+    def csv_row(bar,ticker,date):
+        return {**bar,'ticker':ticker,'date':date.isoformat(),
+                'corporate_actions_checked':str(bar.get('corporate_actions_checked',bar.get('actions_checked',False))).lower(),
+                'traded_value_basis':bar.get('traded_value_basis',bar.get('turnover_basis','actual_regular')),
+                'tradable':str(bar.get('tradable',True)).lower()}
     for ticker,bars in previous.items():
         for bar in bars:
             date=bar['date'] if hasattr(bar['date'],'isoformat') else day(bar['date'],'date')
-            if date<asof: merged[(ticker,date)]={**bar,'ticker':ticker,'date':date.isoformat()}
+            if date<asof: merged[(ticker,date)]=csv_row(bar,ticker,date)
     retained=set(merged)
     for bar in fresh:
         date=bar['date'] if hasattr(bar['date'],'isoformat') else day(bar['date'],'date')
         if date<=asof:
-            key=(bar['ticker'],date);merged[key]=bar;retained.discard(key)
+            key=(bar['ticker'],date);merged[key]=csv_row(bar,bar['ticker'],date);retained.discard(key)
     return [merged[key] for key in sorted(merged)],len(retained)
 
 

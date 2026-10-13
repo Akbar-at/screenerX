@@ -10,6 +10,18 @@ from screenerx.market import collect_one, validate_universe,merge_history
 
 
 class MarketTests(unittest.TestCase):
+    def test_normalized_history_roundtrips_without_losing_source_quality_flags(self):
+        from screenerx.engine import parse_prices,load_prices,write_csv
+        from screenerx.fetch import FIELDS
+        raw={'ticker':'BBCA','date':'2026-10-12','open':100,'high':110,'low':90,'close':105,'volume':1000,
+             'traded_value_idr':105000,'traded_value_basis':'close_times_volume_estimate',
+             'source':'Yahoo','corporate_actions_checked':'false','tradable':'true'}
+        rows,_=merge_history([],parse_prices([raw]),date(2026,10,13))
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'prices.csv';write_csv(path,rows,FIELDS);loaded=load_prices(path)['BBCA'][0]
+        self.assertFalse(loaded['actions_checked'])
+        self.assertEqual(loaded['turnover_basis'],'close_times_volume_estimate')
+        self.assertEqual(loaded['close'],105)
     def test_history_merge_retains_gaps_prefers_new_and_never_fills_current_session(self):
         previous={'BBCA':[{'date':date(2026,10,9),'close':1},{'date':date(2026,10,12),'close':2}],
                   'MISSING':[{'date':date(2026,10,12),'close':3},{'date':date(2026,10,13),'close':99}]}
