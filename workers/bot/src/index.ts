@@ -56,7 +56,9 @@ export default {
       const busy=await sql`SELECT 1 FROM sx_refresh_jobs WHERE status='RUNNING' AND lease_until>${now}
         UNION ALL SELECT 1 FROM sx_bot_updates WHERE status='PROCESSING' AND lease_until>${now} LIMIT 1`;
       if (busy.length) return Response.json({error:'Research engine is processing work'}, {status:409});
-      await env.ENGINE.getByName('research-bot-v2').stop();
+      // Recreate the idle container so the current deployed image and secrets are loaded.
+      // Research inputs and delivery state remain durable in R2 and Neon.
+      await env.ENGINE.getByName('research-bot-v2').destroy();
       return Response.json({status:'stopped',message:'The next request starts the engine with current cloud secrets'});
     }
     if (path === '/internal/engine/configure' && request.method === 'POST') {
