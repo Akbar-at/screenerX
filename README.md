@@ -145,7 +145,7 @@ Unset fees, order size or bid/ask prevent verified selection. Use `--include-pro
 
 ## Configuration
 
-[Automatic daily refresh](docs/daily-refresh.md) uses Cloudflare Cron at 18:30 Jakarta, Neon job state, and atomic R2 publication. It refreshes prices, indicators, valuation/MOS, rankings and charts, and the bot loads the latest published report automatically. The cloud pipeline is implemented but requires deployment. Annual financial captures retain their actual source dates.
+[Automatic daily refresh](docs/daily-refresh.md) uses Cloudflare Cron at 18:30 Jakarta, Neon job state, and atomic R2 publication. It refreshes prices, indicators, valuation/MOS, rankings and charts, and the bot loads the latest published report automatically. The cloud pipeline is deployed and its container health check passed with real data. Annual financial captures retain their actual source dates.
 
 The [Telegram bot](docs/telegram-bot.md) returns Indonesian descriptive research, candlestick/valuation PNGs, and single-stock or multi-page PDFs. Preview without a token:
 
@@ -153,7 +153,7 @@ The [Telegram bot](docs/telegram-bot.md) returns Indonesian descriptive research
 .\.venv\Scripts\python.exe -m screenerx.telegram_bot preview --run-dir output/top10-yfinance-latest-2026-10-12/core --prices output/top10-yfinance-latest-2026-10-12/prices.csv --command '/top10'
 ```
 
-Private polling and a Cloudflare Worker + Python Container + Neon/Queues/R2 deployment are implemented. See the setup guide for secrets, allowlists, bundle publishing and deployment prerequisites. Live Telegram delivery and hosted deployment still require credentials and Docker.
+The Cloudflare Worker + Python Container + Neon/Queues/R2 deployment is live. GitHub Actions builds and deploys the image in the cloud. Telegram delivery awaits the BotFather token and allowed user/chat IDs; see the setup guide.
 
 Run company financials across an existing full-universe price collection using Yahoo explicitly:
 
