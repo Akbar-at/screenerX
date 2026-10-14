@@ -18,6 +18,17 @@ def call(name='get_coverage',arguments='{}'):
 
 
 class AgentTests(unittest.TestCase):
+    def test_idx_tool_attaches_native_dashboard_and_preserves_broker_scope(self):
+        bot=MagicMock();bot.repository.report={'as_of':'2026-10-13'}
+        bot.idx_metrics.return_value={'ticker':'BMRI','as_of':'2026-10-13','datasets':{'stocks':{'status':'UNAVAILABLE'}},'errors':{'stocks':'Temporary source failure'}}
+        bot.prepare.return_value=[{'kind':'photo','path':'idx.png'}]
+        host=ResearchTools(bot);result=host.call('get_idx_metrics',{'ticker':'BMRI','reference':False})
+        self.assertEqual(result['broker_net_status'],'ON_HOLD');self.assertEqual(result['quotes'],'daily snapshot, not live')
+        bot.prepare.assert_called_once_with('/foreign BMRI',refresh=False)
+        host.call('get_idx_metrics',{'ticker':'BMRI','reference':False});self.assertEqual(bot.prepare.call_count,1)
+        for args in [{'ticker':'BMRI','reference':'true'},{'ticker':'BMRI; shell'},{'ticker':'BMRI','url':'https://elsewhere'}]:
+            with self.assertRaises(ValueError):host.call('get_idx_metrics',args)
+
     def test_larger_default_retries_at_16384_and_preserves_long_answers(self):
         requests=[];answer='Long answer. '*2000
         def transport(request):

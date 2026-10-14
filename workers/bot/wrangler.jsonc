@@ -16,7 +16,8 @@
     "AGENT_MAX_ROUNDS": "6",
     "AGENT_MAX_TOOL_CALLS": "12",
     "AGENT_MAX_TOKENS": "8192",
-    "AGENT_TIMEOUT_SECONDS": "300"
+    "AGENT_TIMEOUT_SECONDS": "300",
+    "BOT_IDX_ENABLED": "true"
   },
   "queues": {
     "producers": [

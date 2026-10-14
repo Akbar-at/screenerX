@@ -53,7 +53,7 @@ jobs:
       - name: Test research tools and agent protocol
         run: |
           pip install -r requirements.txt -r requirements-bot.txt
-          python -m unittest tests.test_agent tests.test_analysis_modes tests.test_telegram_bot tests.test_reporting_tables tests.test_market tests.test_daily_refresh
+          python -m unittest tests.test_agent tests.test_analysis_modes tests.test_telegram_bot tests.test_reporting_tables tests.test_market tests.test_daily_refresh tests.test_idx_source
         env:
           MPLBACKEND: Agg
       - name: Install and validate Worker

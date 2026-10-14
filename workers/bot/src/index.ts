@@ -10,6 +10,7 @@ interface Env {
   BOT_AGENT_ENABLED: string; OPENROUTER_API_KEY: string; OPENROUTER_MODEL: string;
   AGENT_MAX_ROUNDS: string; AGENT_MAX_TOOL_CALLS: string; AGENT_MAX_TOKENS: string; AGENT_TIMEOUT_SECONDS: string;
   AGENT_REASONING_ENABLED: string;
+  BOT_IDX_ENABLED: string;
   BOT_QUEUE: Queue<{update_id: number}>; REPORTS: R2Bucket;
   ENGINE: DurableObjectNamespace<ResearchEngine>;
 }
@@ -34,6 +35,8 @@ export class ResearchEngine extends Container<Env> {
     AGENT_MAX_TOKENS: this.env.AGENT_MAX_TOKENS ?? '8192',
     AGENT_TIMEOUT_SECONDS: this.env.AGENT_TIMEOUT_SECONDS ?? '300',
     AGENT_REASONING_ENABLED: this.env.AGENT_REASONING_ENABLED ?? '',
+    BOT_IDX_ENABLED: this.env.BOT_IDX_ENABLED ?? 'false',
+    BOT_IDX_CACHE: '/tmp/screenerx-idx',
     INPUT_BUNDLE_URL: this.env.INPUT_BUNDLE_URL,
     ARTIFACT_ARCHIVE_URL: this.env.INPUT_BUNDLE_URL.replace(/\/internal\/bundle\/?$/, '/internal/artifacts'),
     BOT_ARTIFACTS: '/tmp/screenerx-artifacts', BOT_DATA: '/tmp/screenerx-input',
@@ -80,12 +83,42 @@ export default {
         body:JSON.stringify(accessSettings(env)),
       }));
     }
+    if (path.startsWith('/internal/idx-cache/')) {
+      if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer '+env.ENGINE_SECRET))
+        return new Response('Forbidden',{status:403});
+      const key=path.substring('/internal/idx-cache/'.length);
+      if (!/^\d{4}-\d{2}-\d{2}\/(stocks|brokers|profiles|ratios)\.json$/.test(key)) return new Response('Invalid IDX key',{status:400});
+      if (request.method==='GET') {
+        const object=await env.REPORTS.get('idx/'+key);
+        return object ? new Response(object.body,{headers:{'Content-Type':'application/json'}}) : new Response('Not found',{status:404});
+      }
+      if (request.method==='PUT') {
+        const raw=await request.arrayBuffer();if (raw.byteLength>8*1024*1024) return new Response('Too large',{status:413});
+        let envelope:any,sourceBytes:Uint8Array;
+        try {
+          envelope=JSON.parse(new TextDecoder().decode(raw));
+          if (envelope.as_of!==key.split('/')[0] || envelope.dataset!==key.split('/')[1].replace('.json','')) throw new Error('Identity');
+          sourceBytes=Uint8Array.from(atob(envelope.raw_base64),c=>c.charCodeAt(0));
+        } catch { return new Response('Invalid IDX envelope',{status:400}); }
+        const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',sourceBytes))).map(x=>x.toString(16).padStart(2,'0')).join('');
+        if (hash!==envelope.sha256) return new Response('IDX checksum mismatch',{status:400});
+        const objectHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',raw))).map(x=>x.toString(16).padStart(2,'0')).join('');
+        const objectKey='idx/'+key;
+        await env.REPORTS.put(objectKey,raw,{customMetadata:{sha256:objectHash,source_sha256:hash}});
+        const sql=neon(env.DATABASE_URL);
+        await sql`INSERT INTO sx_bot_artifacts(object_key,sha256,bytes) VALUES (${objectKey},${objectHash},${raw.byteLength})
+          ON CONFLICT(object_key) DO UPDATE SET sha256=EXCLUDED.sha256,bytes=EXCLUDED.bytes`;
+        return Response.json({ok:true,sha256:objectHash,source_sha256:hash});
+      }
+      return new Response('Method not allowed',{status:405});
+    }
     if ((path === '/internal/engine/health' && request.method === 'GET') ||
+        (path === '/internal/idx/check' && request.method === 'POST') ||
         (path === '/internal/refresh' && request.method === 'POST')) {
       if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))
         return new Response('Forbidden', {status: 403});
       try {
-        const target=path === '/internal/engine/health' ? '/health' : '/internal/refresh';
+        const target=path === '/internal/engine/health' ? '/health' : path;
         return await env.ENGINE.getByName('research-bot-v2').fetch(new Request('http://engine'+target,request));
       } catch { return Response.json({error:'Research engine unavailable'}, {status:503}); }
     }

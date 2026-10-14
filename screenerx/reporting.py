@@ -15,7 +15,7 @@ GREEN = '#176148'
 INK = '#19352e'
 MUTED = '#61726b'
 RED = '#ba493e'
-RENDERER_VERSION = 'selectable-analysis-v4'
+RENDERER_VERSION = 'selectable-analysis-idx-v5'
 
 
 def money(value):
@@ -161,6 +161,11 @@ def scoped_narrative(company):
     if 'broker' in modes:
         selected.append(('Broker flow',[('Status','ON_HOLD'),('Sumber','Belum terintegrasi')]))
         sections.append(('Broker flow',text_table(selected[-1][1])+'\n\nON_HOLD. '+components['broker']['assessment']))
+        if company.get('_idx_data'):
+            from .idx_reporting import idx_tables
+            for title,rows in idx_tables(company['_idx_data']):
+                selected.append((title,rows));sections.append((title,text_table(rows)))
+            sections.append(('Batasan IDX','Aktivitas asing adalah volume saham. Broker mencakup seluruh bursa, bukan broker net saham ini. Bid/offer merupakan snapshot harian, bukan quote live.'))
     statuses_only=[c['status'] for c in components.values()]
     label='ON_HOLD' if modes==('broker',) else 'ANALISIS PARSIAL' if any(x in ('UNAVAILABLE','PARTIAL_ESTIMATES','ON_HOLD') for x in statuses_only) else 'ANALISIS TERSEDIA'
     action=' | '.join(titles[m]+': '+components[m]['assessment'] for m in modes)
@@ -170,6 +175,8 @@ def scoped_narrative(company):
 
 
 def scoped_figure(company,bars):
+    import matplotlib
+    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
     info=scoped_narrative(company); technical='technical' in company['_analysis_modes']

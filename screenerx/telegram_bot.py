@@ -32,6 +32,9 @@ HELP = ('screenerX - riset saham Indonesia\n\n'
         '/coverage - cakupan dan data yang belum tersedia\n'
         '/status - tanggal run dan status pengiriman\n\n'
         '/ask Pertanyaan - agent OpenRouter jika mode agent diaktifkan\n\n'
+        '/idx BMRI - dashboard IDX, foreign volume, turnover, bid/offer, profil dan rasio\n'
+        '/foreign BMRI - aktivitas asing dan broker seluruh pasar\n'
+        '/idxbrokers - aktivitas broker seluruh bursa\n\n'
         'Di chat pribadi, tulis pertanyaan langsung. Di grup, reply pesan bot tanpa /ask.\n\n'
         'Semua kode di universe dapat diperiksa, termasuk yang tidak masuk shortlist. '
         'Valuasi belum direview. Broker flow ON_HOLD.')
@@ -148,6 +151,11 @@ class TelegramClient:
 
 
 class ResearchBot:
+    def idx_metrics(self,ticker,reference=False):
+        if os.getenv('BOT_IDX_ENABLED','false').lower()!='true': return None
+        from .idx_source import get_idx_source
+        return get_idx_source().stock_metrics(ticker,self.repository.report['as_of'],reference=reference)
+
     def __init__(self,repository,store,client,users,chats,output='output/bot-artifacts',delivery_enabled=True,open_groups=()):
         if delivery_enabled and not open_groups and (not users or not chats): raise InputError('Explicit allowed user/chat IDs or group IDs are required')
         self.delivery_enabled=delivery_enabled
@@ -173,6 +181,19 @@ class ResearchBot:
         output=self.output/run_key
         def messages(body): return [{'kind':'text','text':telegram_html(part),'parse_mode':'HTML'} for part in chunks(body)]
         if command in ('/start','/help'): return messages(HELP)
+        if command in ('/idx','/foreign','/idxbrokers'):
+            if os.getenv('BOT_IDX_ENABLED','false').lower()!='true': return messages('Sumber IDX belum diaktifkan.')
+            if command!='/idxbrokers' and len(args)<2: return messages(f'Gunakan {command} KODE, contoh {command} BMRI.')
+            ticker='IDX' if command=='/idxbrokers' else symbol_for(args[1])[0]
+            from .idx_reporting import render_idx
+            data=self.idx_metrics(ticker,reference=command=='/idx')
+            if command=='/idxbrokers':
+                data={**data,'datasets':{'brokers':data['datasets']['brokers']},
+                      'evidence':{'brokers':data['evidence']['brokers']} if 'brokers' in data['evidence'] else {},
+                      'errors':{'brokers':data['errors']['brokers']} if 'brokers' in data['errors'] else {}}
+                data.pop('stocks',None)
+            assets=render_idx(data,self.output/'idx')
+            return [{'kind':'photo','path':str(assets['chart']),'caption':ticker+' | '+data['as_of']+' | IDX; broker net ON_HOLD'}]+messages(assets['text'])
         if command in ('/top','/top10'):
             assets=render_top(repository,output)
             result=[{'kind':'photo','path':str(assets['png']),'caption':f"Top 10 | {repository.report['as_of']} | {repository.report['selected_count']} kandidat lolos"}]+messages(assets['text'])
@@ -211,9 +232,12 @@ class ResearchBot:
             else:
                 company=({'ticker':ticker,'as_of':repository.report['as_of']} if modes==('broker',)
                          else repository.company(ticker))
+            if 'broker' in modes:
+                idx=self.idx_metrics(ticker)
+                if idx is not None: company={**company,'_idx_data':idx}
             if scoped:
                 company=select_analysis(company,modes)
-                output=self.output/hashlib.sha256((str(output.name)+'|'+ '+'.join(modes)).encode()).hexdigest()[:16]
+                output=self.output/hashlib.sha256((str(output.name)+'|'+ '+'.join(modes)+'|'+json.dumps(company.get('_idx_data',{}).get('evidence',{}),sort_keys=True)).encode()).hexdigest()[:16]
             info=narrative(company)
             assets=render_stock(company,bars if 'technical' in modes else [],output)
             image={'kind':'photo','path':str(assets['chart']),'caption':ticker+' | '+company['as_of']+' | '+info['label']}
@@ -221,7 +245,13 @@ class ResearchBot:
                 sections=[s for s in info['sections'] if s[0] in ('Fundamental & valuasi','Risiko utama')]
                 return [image]+messages(f"{ticker} | {company['as_of']}\n\n"+'\n\n'.join(t+'\n'+b for t,b in sections))
             if command=='/report': return [image,{'kind':'document','path':str(assets['pdf']),'caption':ticker+' | '+company['as_of']}]
-            return [image]+(messages(info['text']) if command in ('/stock','/technical','/fundamental','/broker','/valuation') else [])
+            result=[image]+(messages(info['text']) if command in ('/stock','/technical','/fundamental','/broker','/valuation') else [])
+            if not scoped and company.get('_idx_data'):
+                from .idx_reporting import render_idx
+                supplement=render_idx(company['_idx_data'],self.output/'idx')
+                result.append({'kind':'photo','path':str(supplement['chart']),'caption':ticker+' | '+company['as_of']+' | IDX data tambahan'})
+                if command=='/stock': result.extend(messages(supplement['text']))
+            return result
         return messages('Perintah belum tersedia.\n\n'+HELP)
 
     def accept(self,update):
@@ -296,18 +326,28 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'open_group_count':len(bot.open_groups),
                 'agent_enabled':os.getenv('BOT_AGENT_ENABLED','false').lower()=='true',
                 'agent_configured':bool(os.getenv('OPENROUTER_API_KEY') and os.getenv('OPENROUTER_MODEL')),
+                'idx_enabled':os.getenv('BOT_IDX_ENABLED','false').lower()=='true',
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
-            internal=self.path in ('/internal/process','/internal/refresh','/internal/access')
+            internal=self.path in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check')
             secret=self.headers.get('Authorization','') if internal else self.headers.get('X-Telegram-Bot-Api-Secret-Token','')
             expected='Bearer '+engine_secret if internal else webhook_secret
             if not expected or expected=='Bearer ' or not hmac.compare_digest(secret,expected): return self.respond(403,{'error':'Forbidden'})
-            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
+            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
             try:
                 length=int(self.headers.get('Content-Length','0'))
                 if not 0<length<=32768: return self.respond(413,{'error':'Invalid payload size'})
                 payload=json.loads(self.rfile.read(length))
+                if self.path=='/internal/idx/check':
+                    from .idx_source import get_idx_source
+                    data=get_idx_source().stock_metrics(payload.get('ticker','BMRI'),payload.get('as_of',bot.repository.report['as_of']),
+                                                        reference=payload.get('reference',True),force=payload.get('force',False))
+                    from .idx_reporting import idx_tables,render_idx
+                    result={'datasets':data['datasets'],'errors':data['errors'],'evidence':data['evidence'],'tables':idx_tables(data)}
+                    if payload.get('render'):
+                        assets=render_idx(data,bot.output/'idx');result['chart_bytes']=assets['chart'].stat().st_size
+                    return self.respond(200,result)
                 if self.path=='/internal/access':
                     bot.configure_access(payload)
                     return self.respond(200,{'status':'configured','open_group_count':len(bot.open_groups)})

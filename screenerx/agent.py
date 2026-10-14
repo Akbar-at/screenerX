@@ -22,7 +22,13 @@ Provide the depth requested by the user. Summarize numerical tables rather than 
 tables already attached to the reports.
 Mention the ticker and source date for each finding. Never claim a tool or chart ran unless it did.
 Use ticker symbols; do not invent company names that the tools have not supplied.
-Broker flow is ON_HOLD; never invent transactions, accumulation, foreign flows, or broker identities.
+Per-stock broker net flow is ON_HOLD. IDX foreign volume and exchange-wide broker activity
+may be available through tools. These are separate datasets: never infer a named broker's
+stock accumulation, investor identity, or foreign rupiah value from them. Bid/offer is a daily
+snapshot, not a live quote. IDX ratios are reference data and do not replace valuation inputs.
+For IDX foreign activity, bid/offer, issuer profiles or reference ratios, call get_idx_metrics.
+Use reference=false for flow/market data only, true for profiles/ratios. Source fsDate can be
+older than the requested period; do not assert current annual statements from that request.
 Valuations are UNREVIEWED_ESTIMATES, not guaranteed targets. Distinguish available data from a
 qualified entry. No trade execution, external browsing, secret access, or changes to deployment.
 For one or named tickers, use analyze_stock. For the top 10 or a shortlist batch, use
@@ -47,6 +53,8 @@ TOOLS=[tool('analyze_stock','Run selected stored-data analyses and attach the or
         'output':{'type':'string','enum':['analysis','chart','pdf']},
         'limit':{'type':'integer','minimum':1,'maximum':10}},('modes',)),
     tool('get_shortlist','Read the existing qualified combined research shortlist; do not invent extra candidates.'),
+    tool('get_idx_metrics','Fetch dated IDX foreign volumes, reported turnover, daily bid/offer and exchange-wide broker activity; attach numerical image/report. Optional profile/ratios are reference only.',{
+        'ticker':{'type':'string'},'reference':{'type':'boolean'}},('ticker',)),
     tool('get_coverage','Read stored run date, coverage, missing slots and source limitations.'),
     tool('get_status','Read the stored run date and analysis availability, without credentials or personal IDs.')]
 
@@ -62,9 +70,24 @@ class ResearchTools:
         if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
         if name not in {t['function']['name'] for t in TOOLS}: raise ValueError('Unknown research tool')
         allowed=({'ticker','modes','output'} if name=='analyze_stock' else
-                 {'modes','output','limit'} if name=='analyze_shortlist' else set())
+                 {'modes','output','limit'} if name=='analyze_shortlist' else {'ticker','reference'} if name=='get_idx_metrics' else set())
         if set(args)-allowed: raise ValueError('Unexpected tool arguments')
         report=self.bot.repository.report
+        if name=='get_idx_metrics':
+            raw=args.get('ticker');reference=args.get('reference',True)
+            if not isinstance(raw,str) or not re.fullmatch(r'[A-Za-z0-9]{1,12}(?:\.JK)?',raw) or type(reference) is not bool:
+                raise ValueError('Invalid IDX arguments')
+            ticker,_=symbol_for(raw);key=('IDX',ticker,reference)
+            if key in self.completed:return self.completed[key]
+            data=self.bot.idx_metrics(ticker,reference=reference)
+            if data is None:raise ValueError('IDX source is disabled')
+            from .idx_reporting import idx_tables
+            parts=self.bot.prepare(('/idx ' if reference else '/foreign ')+ticker,refresh=False)
+            self.attachments.extend(parts)
+            result={'ticker':ticker,'as_of':data['as_of'],'datasets':data['datasets'],'tables':idx_tables(data),
+                    'errors':data['errors'],'broker_net_status':'ON_HOLD','quotes':'daily snapshot, not live',
+                    'ratios':'reference only; accounting periods and units not validated for valuation inputs'}
+            self.completed[key]=result;return result
         if name=='analyze_shortlist':
             modes=args.get('modes');output=args.get('output','analysis');limit=args.get('limit',10)
             if type(limit) is not int or not 1<=limit<=10: raise ValueError('Invalid shortlist limit')
@@ -95,6 +118,9 @@ class ResearchTools:
             if key in self.completed: return self.completed[key]
             if len(self.completed)>=self.max_analyses: raise ValueError('Analysis limit reached')
             company=({'ticker':ticker,'as_of':report['as_of']} if modes==('broker',) else self.bot.repository.company(ticker))
+            if 'broker' in modes and os.getenv('BOT_IDX_ENABLED','false').lower()=='true':
+                data=self.bot.idx_metrics(ticker)
+                if data is not None:company={**company,'_idx_data':data}
             selected=select_analysis(company,modes);info=narrative(selected)
             command={'analysis':'/stock','chart':'/chart','pdf':'/report'}[output]
             parts=self.bot.prepare(f"{command} {ticker} {'+'.join(modes)}",refresh=False)

@@ -117,6 +117,14 @@ class DailyRefresh:
             atomic_json(folder/'publication-checks.json',checks)
             if not checks['passed']:
                 raise InputError('; '.join(checks['reasons'])+'; previous published run retained')
+            if os.getenv('BOT_IDX_ENABLED','false').lower()=='true':
+                # Supplemental source failure never replaces/blocks the healthy core report.
+                from .idx_source import get_idx_source
+                try:
+                    supplement=get_idx_source().stock_metrics('BMRI',session,reference=True)
+                    result['idx_enrichment']={'datasets':supplement['datasets'],'errors':supplement['errors']}
+                except Exception:
+                    result['idx_enrichment']={'status':'UNAVAILABLE'}
             from .reporting import render_top
             render_top(fresh,folder/'images')
             if self.publish_url:
