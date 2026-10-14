@@ -6,6 +6,7 @@ from .reporting import render_top,RENDER_LOCK
 
 
 def prepare_daily_digest(repository,output,request_date):
+    import gc
     report=repository.report
     signature={'version':'daily-digest-v1','request_date':request_date,'as_of':report['as_of'],
                'inputs':report.get('input_files'), 'config':report.get('config_sha256'),
@@ -13,6 +14,7 @@ def prepare_daily_digest(repository,output,request_date):
     folder=Path(output)/hashlib.sha256(json.dumps(signature,sort_keys=True).encode()).hexdigest()[:16]
     folder.mkdir(parents=True,exist_ok=True)
     assets=render_top(repository,folder,include_pdf=False)
+    gc.collect()
     pdf=folder/('daily-'+report['as_of']+'.pdf')
     # Append one image at a time: avoid retaining an entire raster report in RAM.
     with RENDER_LOCK:

@@ -346,23 +346,28 @@ def render_stock(company,bars,output):
 
 
 def render_top(repository,output,include_pdf=True):
+    import gc
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
     from contextlib import nullcontext
     output=Path(output); output.mkdir(parents=True,exist_ok=True)
     report=repository.report; stem='top10-'+report['as_of']; analyses=[]
     from .idx_reporting import render_idx
-    idx_assets={c['ticker']:render_idx(c['_idx_data'],output/'idx') for c in report['top10'] if c.get('_idx_data')}
+    idx_assets={}
+    for company in report['top10']:
+        if company.get('_idx_data'):
+            idx_assets[company['ticker']]=render_idx(company['_idx_data'],output/'idx')
+            gc.collect()
     with RENDER_LOCK:
         with PdfPages(output/(stem+'.pdf')) if include_pdf else nullcontext() as pdf:
             fig=summary_figure(report); fig.savefig(output/(stem+'.png'),dpi=160)
             if pdf: pdf.savefig(fig)
-            plt.close(fig)
+            plt.close(fig);del fig;gc.collect()
             for company in report['top10']:
                 bars=repository.bars(company['ticker']); fig=figure(company,bars)
                 if pdf: pdf.savefig(fig)
                 chart=output/f"{company['ticker']}-{company['as_of']}-chart.png"
-                save_chart(fig,company,bars,chart); plt.close(fig)
+                save_chart(fig,company,bars,chart); plt.close(fig);del fig;gc.collect()
                 info=narrative(company)
                 analyses.append({'ticker':company['ticker'],'chart':str(chart),'text':info['text'],'label':info['label']})
                 if company['ticker'] in idx_assets:
