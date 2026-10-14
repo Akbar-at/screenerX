@@ -64,13 +64,14 @@ class TelegramTests(unittest.TestCase):
             first=self.bot.queue_daily_screening('2026-10-14')
             self.assertEqual(first['status'],'QUEUED');self.assertLess(first['update_id'],0)
             self.assertEqual(self.bot.queue_daily_screening('2026-10-14')['status'],'ALREADY_QUEUED')
-            self.assertEqual(self.bot.process(first['update_id']),'DONE')
-            self.assertEqual(self.client.send.call_count,3)
+            with patch('screenerx.daily_digest.prepare_daily_digest',return_value=[{'kind':'photo','path':'image.png'},{'kind':'document','path':'report.pdf'}]):
+                self.assertEqual(self.bot.process(first['update_id']),'DONE')
+            self.assertEqual(self.client.send.call_count,2)
             for call in self.client.send.call_args_list:
                 self.assertEqual(call.args[0],-1003749187440)
                 self.assertEqual(call.args[1]['message_thread_id'],5)
             self.assertEqual(self.bot.process(first['update_id']),'DONE')
-            self.assertEqual(self.client.send.call_count,3)
+            self.assertEqual(self.client.send.call_count,2)
             self.assertNotEqual(self.bot.queue_daily_screening('2026-10-15')['update_id'],first['update_id'])
 
     def test_daily_delivery_rejects_group_outside_allowlist(self):

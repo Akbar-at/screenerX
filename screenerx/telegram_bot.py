@@ -299,11 +299,12 @@ class ResearchBot:
         if not addressed(update):
             self.store.finish(update_id,'DONE'); return 'DONE'
         try:
-            try: messages=self.prepare(message_prompt(update['message']))
+            try:
+                if update['message'].get('screening_request_date'):
+                    from .daily_digest import prepare_daily_digest
+                    messages=prepare_daily_digest(self.repository,self.output,update['message']['screening_request_date'])
+                else: messages=self.prepare(message_prompt(update['message']))
             except (InputError,ValueError) as exc: messages=[{'kind':'text','text':str(exc)}]
-            if update['message'].get('screening_request_date'):
-                messages.insert(0,{'kind':'text','text':'Daily screening | '+update['message']['screening_request_date']+
-                                 '\nSesi data: '+self.repository.report['as_of']})
             if os.getenv('ARTIFACT_ARCHIVE_URL'):
                 import httpx
                 with httpx.Client(timeout=60) as client:
@@ -354,18 +355,26 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'idx_screening_available':bool(bot.repository.report.get('idx_screening')),
                 'daily_delivery_chat':os.getenv('BOT_DAILY_CHAT_ID',''),
                 'daily_delivery_topic':os.getenv('BOT_DAILY_TOPIC_ID',''),
+                'daily_digest_format':'overview-image-and-pdf-v1',
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
-            internal=self.path in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery')
+            internal=self.path in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery','/internal/daily-preview')
             secret=self.headers.get('Authorization','') if internal else self.headers.get('X-Telegram-Bot-Api-Secret-Token','')
             expected='Bearer '+engine_secret if internal else webhook_secret
             if not expected or expected=='Bearer ' or not hmac.compare_digest(secret,expected): return self.respond(403,{'error':'Forbidden'})
-            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
+            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery','/internal/daily-preview','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
             try:
                 length=int(self.headers.get('Content-Length','0'))
                 if not 0<length<=32768: return self.respond(413,{'error':'Invalid payload size'})
                 payload=json.loads(self.rfile.read(length))
+                if self.path=='/internal/daily-preview':
+                    from .daily_digest import prepare_daily_digest
+                    from datetime import datetime
+                    from .fetch import JAKARTA
+                    parts=prepare_daily_digest(bot.repository,bot.output,str(payload.get('request_date') or datetime.now(JAKARTA).date()))
+                    return self.respond(200,{'message_count':len(parts),'parts':[
+                        {'kind':part['kind'],'caption':part['caption'],'bytes':Path(part['path']).stat().st_size} for part in parts]})
                 if self.path=='/internal/daily-delivery':
                     return self.respond(202,bot.queue_daily_screening(payload.get('request_date')))
                 if self.path=='/internal/idx/check':

@@ -128,6 +128,7 @@ export default {
     }
     if ((path === '/internal/engine/health' && request.method === 'GET') ||
         (path === '/internal/idx/check' && request.method === 'POST') ||
+        (path === '/internal/daily-preview' && request.method === 'POST') ||
         (path === '/internal/refresh' && request.method === 'POST')) {
       if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))
         return new Response('Forbidden', {status: 403});
