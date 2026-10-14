@@ -13,8 +13,8 @@
     "BOT_AGENT_ENABLED": "true",
     "AGENT_MAX_ROUNDS": "6",
     "AGENT_MAX_TOOL_CALLS": "12",
-    "AGENT_MAX_TOKENS": "1200",
-    "AGENT_TIMEOUT_SECONDS": "90",
+    "AGENT_MAX_TOKENS": "8192",
+    "AGENT_TIMEOUT_SECONDS": "300",
     "OPENROUTER_MODEL": "z-ai/glm-4.7-flash",
     "AGENT_REASONING_ENABLED": "false"
   },

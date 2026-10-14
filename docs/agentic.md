@@ -35,8 +35,8 @@ OPENROUTER_API_KEY=
 OPENROUTER_MODEL=
 AGENT_MAX_ROUNDS=6
 AGENT_MAX_TOOL_CALLS=12
-AGENT_MAX_TOKENS=1200
-AGENT_TIMEOUT_SECONDS=90
+AGENT_MAX_TOKENS=8192
+AGENT_TIMEOUT_SECONDS=300
 ```
 
 Choose an explicit model supporting tools from the [OpenRouter tool-compatible model list](https://openrouter.ai/models?supported_parameters=tools). The client uses the [OpenRouter tool-calling protocol](https://openrouter.ai/docs/guides/features/tool-calling), sends tools on every turn, returns each result with its matching tool_call_id, preserves reasoning_details when provided, and requires providers to support requested parameters. The API key is sent only as the OpenRouter Authorization header. Research tools cannot read secrets, invoke a shell, modify configuration, send arbitrary messages, or execute orders.
@@ -45,7 +45,7 @@ Defaults bound each request to six model calls and twelve tool calls. Tools run 
 
 Shortlist requests use one batch tool instead of asking the model to emit ten separate calls. The tool keeps requested analysis modes, returns compact assessments, and generates the original per-ticker charts/tables. It uses only the existing combined shortlist; fewer than ten candidates are never padded. Batch expansion shares the request's analysis limit and deadline, and duplicate successful analyses reuse results. Shortlist discovery returns scalar scores, without copying the entire factor tree into model context.
 
-If OpenRouter returns `finish_reason=length`, the partial output is discarded. The client makes at most one bounded retry from the last complete tool history, with a brief-answer instruction and up to twice the configured output allowance (hard maximum 4096 tokens). That retry counts toward the existing model-round limit; completed tools are not rerun. The default first allowance remains 1200 tokens. Final answers are instructed to stay below 350 words and leave numerical tables in the attached engine reports. Generation IDs, finish reasons, token counts and reported API costs are saved as internal outbox diagnostics; credentials and prompts are excluded.
+If OpenRouter returns `finish_reason=length`, the partial output is discarded. The client makes at most one bounded retry from the last complete tool history, with an instruction to finish the requested answer and up to twice the configured output allowance (hard maximum 16384 tokens). That retry counts toward the existing model-round limit; completed tools are not rerun. The default first allowance is 8192 tokens, with 16384 tokens on the single recovery attempt. Answers can provide the requested depth; numerical tables stay in the attached engine reports. Complete long answers are split into Telegram messages without silently truncating characters. Generation IDs, finish reasons, token counts and reported API costs are saved as internal outbox diagnostics; credentials and prompts are excluded.
 
 ## Cloud deployment
 
@@ -86,3 +86,5 @@ Reasoning can be controlled with AGENT_REASONING_ENABLED=true/false; leave it em
 Benchmark (2026-10-13): production uses z-ai/glm-4.7-flash with reasoning disabled for reliable tool orchestration; inclusionai/ling-3.0-flash is the cheaper/faster alternative with a coverage miss in repeated tests. Results and token forecasts are in output/agentic-benchmark/report.md and forecast.json. This recommendation concerns tool coverage; manual spot checks found factual errors in generated financial commentary. Original engine reports remain authoritative and generated summaries are labeled as AI.
 
 Production API requests reject providers above $0.10 per million input tokens, $0.50 per million output tokens, or any per-request surcharge using [OpenRouter max_price routing](https://openrouter.ai/docs/guides/routing/provider-selection#max-price). The serialized context is capped at 100 KB; model rounds, tool calls and output tokens have separate limits. These are per-request work and pricing limits, not a monthly dollar cap. Change the OpenRouter key's own credit limit if a total account ceiling is required.
+
+Generation time budget is 300 seconds per request, with each provider call capped at the remaining budget or 240 seconds. This permits longer replies; the model/tool round limits and pricing ceilings still apply.

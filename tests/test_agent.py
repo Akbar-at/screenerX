@@ -18,6 +18,20 @@ def call(name='get_coverage',arguments='{}'):
 
 
 class AgentTests(unittest.TestCase):
+    def test_larger_default_retries_at_16384_and_preserves_long_answers(self):
+        requests=[];answer='Long answer. '*2000
+        def transport(request):
+            data=json.loads(request.content);requests.append(data)
+            if len(requests)==1:
+                self.assertEqual(data['max_tokens'],8192)
+                partial=response({'content':'Truncated'});partial['choices'][0]['finish_reason']='length'
+                return httpx.Response(200,json=partial)
+            self.assertEqual(data['max_tokens'],16384)
+            return httpx.Response(200,json=response({'content':answer}))
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            self.assertEqual(OpenRouterAgent('key','model',client=client).run('Give a detailed answer',MagicMock()),answer)
+        self.assertEqual(len(requests),2)
+
     def test_truncated_tool_arguments_are_discarded_and_retry_is_bounded(self):
         requests=[]
         def transport(request):
@@ -31,7 +45,7 @@ class AgentTests(unittest.TestCase):
             return httpx.Response(200,json=response({'content':'Please choose a ticker.'}))
         tools=MagicMock()
         with httpx.Client(transport=httpx.MockTransport(transport)) as client:
-            self.assertEqual(OpenRouterAgent('key','model',client=client).run('Analyze top 10',tools),'Please choose a ticker.')
+            self.assertEqual(OpenRouterAgent('key','model',client=client,max_tokens=1200).run('Analyze top 10',tools),'Please choose a ticker.')
         self.assertEqual(len(requests),2);tools.call.assert_not_called()
 
     def test_truncated_final_retry_never_reexecutes_completed_tools(self):
