@@ -7,6 +7,7 @@ This build adds an optional agent to the existing Cloudflare Container/Worker + 
 | Tool | Existing capability |
 | --- | --- |
 | analyze_stock | Select technical/fundamental/broker combinations and run `/stock`, `/chart` or `/report`; attach original reports |
+| analyze_shortlist | Analyze up to ten stored shortlist candidates in requested modes with one batch tool call; attach each chart/report |
 | get_shortlist | Read the existing qualified combined research shortlist |
 | get_coverage | Read run date, universe coverage and unfilled shortlist slots |
 | get_status | Read run date and fundamental/broker availability |
@@ -41,6 +42,10 @@ AGENT_TIMEOUT_SECONDS=90
 Choose an explicit model supporting tools from the [OpenRouter tool-compatible model list](https://openrouter.ai/models?supported_parameters=tools). The client uses the [OpenRouter tool-calling protocol](https://openrouter.ai/docs/guides/features/tool-calling), sends tools on every turn, returns each result with its matching tool_call_id, preserves reasoning_details when provided, and requires providers to support requested parameters. The API key is sent only as the OpenRouter Authorization header. Research tools cannot read secrets, invoke a shell, modify configuration, send arbitrary messages, or execute orders.
 
 Defaults bound each request to six model calls and twelve tool calls. Tools run sequentially, duplicate successful analyses within a request reuse results, and model output tokens are bounded per call. The deadline is checked between calls; an in-progress local renderer cannot be forcibly interrupted. Limits bound work, not an exact currency spend. Each request starts a fresh tool context; process failure before outbox staging can cause a new API charge on a durable retry. Source dates come from stored production inputs; the agent does not fetch live broker/company facts or create new mode-specific rankings.
+
+Shortlist requests use one batch tool instead of asking the model to emit ten separate calls. The tool keeps requested analysis modes, returns compact assessments, and generates the original per-ticker charts/tables. It uses only the existing combined shortlist; fewer than ten candidates are never padded. Batch expansion shares the request's analysis limit and deadline, and duplicate successful analyses reuse results. Shortlist discovery returns scalar scores, without copying the entire factor tree into model context.
+
+If OpenRouter returns `finish_reason=length`, the partial output is discarded. The client makes at most one bounded retry from the last complete tool history, with a brief-answer instruction and up to twice the configured output allowance (hard maximum 4096 tokens). That retry counts toward the existing model-round limit; completed tools are not rerun. The default first allowance remains 1200 tokens. Final answers are instructed to stay below 350 words and leave numerical tables in the attached engine reports. Generation IDs, finish reasons, token counts and reported API costs are saved as internal outbox diagnostics; credentials and prompts are excluded.
 
 ## Cloud deployment
 

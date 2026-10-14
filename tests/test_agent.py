@@ -18,6 +18,68 @@ def call(name='get_coverage',arguments='{}'):
 
 
 class AgentTests(unittest.TestCase):
+    def test_truncated_tool_arguments_are_discarded_and_retry_is_bounded(self):
+        requests=[]
+        def transport(request):
+            payload=json.loads(request.content);requests.append(payload)
+            if len(requests)==1:
+                data=response({'tool_calls':[call(arguments='{"unfinished":')]})
+                data['choices'][0]['finish_reason']='length'
+                return httpx.Response(200,json=data)
+            self.assertEqual(payload['max_tokens'],2400)
+            self.assertFalse(any(m.get('tool_calls') for m in payload['messages']))
+            return httpx.Response(200,json=response({'content':'Please choose a ticker.'}))
+        tools=MagicMock()
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            self.assertEqual(OpenRouterAgent('key','model',client=client).run('Analyze top 10',tools),'Please choose a ticker.')
+        self.assertEqual(len(requests),2);tools.call.assert_not_called()
+
+    def test_truncated_final_retry_never_reexecutes_completed_tools(self):
+        requests=[]
+        def transport(request):
+            data=json.loads(request.content);requests.append(data)
+            if len(requests)==1:return httpx.Response(200,json=response({'tool_calls':[call()]}))
+            if len(requests)==2:
+                partial=response({'content':'Incomplete tables'});partial['choices'][0]['finish_reason']='length'
+                return httpx.Response(200,json=partial)
+            self.assertEqual(sum(m['role']=='tool' for m in data['messages']),1)
+            return httpx.Response(200,json=response({'content':'Complete brief summary.'}))
+        tools=MagicMock();tools.call.return_value={}
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            agent=OpenRouterAgent('key','model',client=client)
+            self.assertEqual(agent.run('Check coverage',tools),'Complete brief summary.')
+        tools.call.assert_called_once();self.assertEqual(len(agent.trace),3)
+
+    def test_batch_shortlist_only_runs_requested_modes_and_never_pads(self):
+        bot=MagicMock();c=company();bot.repository.company.side_effect=lambda ticker:{**c,'ticker':ticker}
+        bot.repository.report={'as_of':c['as_of'],'top10':[{'ticker':'BBCA'},{'ticker':'BMRI'}]}
+        bot.prepare.return_value=[{'kind':'photo','path':'chart.png'}]
+        tools=ResearchTools(bot)
+        result=tools.call('analyze_shortlist',{'modes':['technical'],'limit':10})
+        self.assertEqual(result['available_candidates'],2);self.assertEqual(len(result['analyses']),2)
+        self.assertEqual(len(tools.attachments),2)
+        for item in bot.prepare.call_args_list:
+            self.assertTrue(item.args[0].endswith(' technical'));self.assertFalse(item.kwargs['refresh'])
+        tools.call('analyze_shortlist',{'modes':['technical']});self.assertEqual(bot.prepare.call_count,2)
+        for args in [{'modes':['technical'],'limit':True},{'modes':['technical'],'limit':11},
+                     {'modes':['invented']},{'modes':['technical'],'ticker':'BBCA'},
+                     {'modes':['technical'],'output':'invalid'}]:
+            with self.assertRaises(ValueError):tools.call('analyze_shortlist',args)
+
+    def test_batch_expansion_respects_analysis_work_limit(self):
+        bot=MagicMock();c=company();bot.repository.company.side_effect=lambda ticker:{**c,'ticker':ticker}
+        bot.repository.report={'as_of':c['as_of'],'top10':[{'ticker':t} for t in ['BBCA','BMRI','BBNI']]}
+        bot.prepare.return_value=[{'kind':'photo','path':'chart.png'}]
+        tools=ResearchTools(bot);tools.max_analyses=2
+        result=tools.call('analyze_shortlist',{'modes':['technical']})
+        self.assertEqual(bot.prepare.call_count,2)
+        self.assertEqual(result['analyses'][2]['status'],'UNAVAILABLE')
+
+    def test_shortlist_returns_only_scalar_scores_not_entire_factor_trees(self):
+        bot=MagicMock();bot.repository.report={'as_of':'2026-10-13','top10':[{'ticker':'BBCA','rank':1,'score':{'total':80,'components':{'huge':'details'}}}]}
+        result=ResearchTools(bot).call('get_shortlist',{})
+        self.assertEqual(result['candidates'][0]['score'],80);self.assertNotIn('components',str(result))
+
     def test_production_configuration_enforces_low_cost_provider_ceiling(self):
         with patch.dict(os.environ,{'OPENROUTER_API_KEY':'key','OPENROUTER_MODEL':'z-ai/glm-4.7-flash','AGENT_REASONING_ENABLED':'false'}):
             agent=OpenRouterAgent.from_env()
@@ -39,8 +101,22 @@ class AgentTests(unittest.TestCase):
 
     def test_truncated_output_is_not_accepted_as_a_complete_answer(self):
         data=response({'content':'Incomplete sentence'});data['choices'][0]['finish_reason']='length'
-        with httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(200,json=data))) as client:
+        requests=[]
+        def transport(request):requests.append(request);return httpx.Response(200,json=data)
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
             with self.assertRaises(AgentError):OpenRouterAgent('key','model',client=client).run('Hello',MagicMock())
+        self.assertEqual(len(requests),2)
+
+    def test_api_diagnostics_are_durable_metadata_and_not_sent_to_telegram(self):
+        from types import SimpleNamespace
+        from screenerx.telegram_bot import TelegramClient
+        agent=SimpleNamespace(model='z-ai/glm-4.7-flash',trace=[{'finish_reason':'stop','reported_cost_usd':.001}],run=lambda prompt,tools:'Completed.')
+        with patch('screenerx.agent.OpenRouterAgent.from_env',return_value=agent):
+            parts=prepare_agent(MagicMock(),'Check status')
+        self.assertEqual(parts[-1]['agent_diagnostics']['model'],agent.model)
+        client=TelegramClient.__new__(TelegramClient);client.request=MagicMock(return_value={})
+        client._send(123,parts[-1])
+        self.assertNotIn('agent_diagnostics',client.request.call_args.args[1])
 
     def test_tool_round_trip_preserves_id_and_request_schema(self):
         requests=[]
