@@ -157,7 +157,7 @@ export default {
       if (!sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET) || !env.ENGINE_SECRET)
         return new Response('Forbidden', {status: 403});
       const suffix = path.substring('/internal/bundle/'.length);
-      const names = ['core-run.json','prices.csv','financials.json','fx.json'];
+      const names = ['core-run.json','prices.csv','financials.json','fx.json','daily-overview.png','daily-report.pdf'];
       if (request.method === 'PUT') {
         const [version,name,...extra] = suffix.split('/');
         if (extra.length || !/^[a-f0-9]{16}$/.test(version) || ![...names,'manifest.json'].includes(name))

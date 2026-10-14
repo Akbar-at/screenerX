@@ -356,6 +356,7 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'daily_delivery_chat':os.getenv('BOT_DAILY_CHAT_ID',''),
                 'daily_delivery_topic':os.getenv('BOT_DAILY_TOPIC_ID',''),
                 'daily_digest_format':'overview-image-and-pdf-v1',
+                'engine_pid':os.getpid(),'daily_preview':getattr(bot,'daily_preview',None),
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
@@ -372,9 +373,23 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                     from .daily_digest import prepare_daily_digest
                     from datetime import datetime
                     from .fetch import JAKARTA
-                    parts=prepare_daily_digest(bot.repository,bot.output,str(payload.get('request_date') or datetime.now(JAKARTA).date()))
-                    return self.respond(200,{'message_count':len(parts),'parts':[
-                        {'kind':part['kind'],'caption':part['caption'],'bytes':Path(part['path']).stat().st_size} for part in parts]})
+                    if getattr(bot,'daily_preview',{}).get('running'):return self.respond(202,{'status':'RUNNING'})
+                    started=time.monotonic();bot.daily_preview={'running':True,'stage':'Starting','pid':os.getpid()}
+                    date=str(payload.get('request_date') or datetime.now(JAKARTA).date())
+                    def progress(stage):
+                        try:
+                            import resource
+                            peak=round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,1)
+                        except ImportError:peak=None
+                        bot.daily_preview.update(stage=stage,elapsed_seconds=round(time.monotonic()-started,1),peak_memory_mb=peak)
+                    def preview():
+                        try:
+                            parts=prepare_daily_digest(bot.repository,bot.output,date,progress=progress)
+                            bot.daily_preview.update(running=False,message_count=len(parts),parts=[
+                                {'kind':part['kind'],'caption':part['caption'],'bytes':Path(part['path']).stat().st_size} for part in parts])
+                        except Exception as error:bot.daily_preview.update(running=False,error=type(error).__name__)
+                    threading.Thread(target=preview,daemon=True).start()
+                    return self.respond(202,{'status':'STARTED','pid':os.getpid()})
                 if self.path=='/internal/daily-delivery':
                     return self.respond(202,bot.queue_daily_screening(payload.get('request_date')))
                 if self.path=='/internal/idx/check':
@@ -412,7 +427,7 @@ def bootstrap(url,secret,directory):
     with httpx.Client(timeout=60) as client:
         response=client.get(url+'/manifest.json',headers=headers); response.raise_for_status(); manifest=response.json()
         for name in manifest['files']:
-            if name not in ('core-run.json','prices.csv','financials.json','fx.json'): raise InputError('Unknown bundle file')
+            if name not in ('core-run.json','prices.csv','financials.json','fx.json','daily-overview.png','daily-report.pdf'): raise InputError('Unknown bundle file')
             version='?version='+manifest['version'] if manifest.get('version') else ''
             response=client.get(url+'/'+name+version,headers=headers); response.raise_for_status()
             raw=response.content
@@ -434,6 +449,7 @@ def bootstrap(url,secret,directory):
                 (snapshots/(ticker+'.json')).write_bytes(source)
             os.environ['BOT_FINANCIAL_SNAPSHOTS']=str(snapshots)
         if 'fx.json' in manifest['files']: os.environ['BOT_FX_SNAPSHOT']=str(directory/'fx.json')
+    (directory/'manifest.json').write_text(json.dumps(manifest),encoding='utf-8')
     return directory
 
 

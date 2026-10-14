@@ -35,7 +35,7 @@ class DailyRefreshTests(unittest.TestCase):
         return (patch('screenerx.production.latest_session',return_value=(date(2026,10,13),{'observed':'2026-10-13'})),
                 patch('screenerx.market.run',side_effect=self.fake_market),
                 patch('screenerx.fx.fetch_fx',side_effect=InputError('Temporary FX failure')),
-                patch('screenerx.reporting.render_top'),patch('screenerx.reporting.ReportRepository',return_value=MagicMock(report={'as_of':'2026-10-13','coverage_complete_count':100})))
+                patch('screenerx.daily_digest.prepare_daily_digest',return_value=[]),patch('screenerx.reporting.ReportRepository',return_value=MagicMock(report={'as_of':'2026-10-13','coverage_complete_count':100})))
 
     def test_schedule_is_jakarta_weekdays_after_0730(self):
         self.assertFalse(due(datetime(2026,10,13,7,29,tzinfo=JAKARTA)))

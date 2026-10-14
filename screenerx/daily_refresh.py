@@ -120,16 +120,17 @@ class DailyRefresh:
             atomic_json(folder/'publication-checks.json',checks)
             if not checks['passed']:
                 raise InputError('; '.join(checks['reasons'])+'; previous published run retained')
-            from .reporting import render_top
-            render_top(fresh,folder/'images')
+            from .daily_digest import prepare_daily_digest
+            daily_assets=prepare_daily_digest(fresh,folder/'images',date)
             if self.publish_url:
                 from .refresh_bundle import build_bundle,publish_bundle
-                bundle=build_bundle(run_dir,prices,folder/'bundle',self.snapshots,fx_path)
+                bundle=build_bundle(run_dir,prices,folder/'bundle',self.snapshots,fx_path,daily_assets=daily_assets)
                 publish_bundle(bundle,self.publish_url,self.secret)
             pointer={'as_of':session.isoformat(),'run_dir':str(run_dir.resolve()),'prices':str(prices.resolve()),
                      'report_sha256':file_hash(run_dir/'core-run.json'),'prices_sha256':file_hash(prices),
                      'financial_snapshots':str(self.snapshots.resolve()),'fx_snapshot':str(fx_path.resolve()) if fx_path else None}
             atomic_json(self.pointer,pointer)
+            if daily_assets: fresh.daily_assets=daily_assets
             self.repository=fresh; self.fx=fx_path
             if self.on_publish: self.on_publish(fresh)
             if self.on_daily_report: result['telegram_delivery']=self.on_daily_report(fresh,date)

@@ -345,7 +345,7 @@ def render_stock(company,bars,output):
     return {'png':output/(stem+'.png'),'chart':output/(stem+'-chart.png'),'pdf':output/(stem+'.pdf'),'text':info['text']}
 
 
-def render_top(repository,output,include_pdf=True):
+def render_top(repository,output,include_pdf=True,progress=None):
     import gc
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
@@ -356,14 +356,17 @@ def render_top(repository,output,include_pdf=True):
     idx_assets={}
     for company in report['top10']:
         if company.get('_idx_data'):
+            if progress:progress('IDX chart '+company['ticker'])
             idx_assets[company['ticker']]=render_idx(company['_idx_data'],output/'idx')
             gc.collect()
     with RENDER_LOCK:
         with PdfPages(output/(stem+'.pdf')) if include_pdf else nullcontext() as pdf:
+            if progress:progress('Overview chart')
             fig=summary_figure(report); fig.savefig(output/(stem+'.png'),dpi=160)
             if pdf: pdf.savefig(fig)
             plt.close(fig);del fig;gc.collect()
             for company in report['top10']:
+                if progress:progress('Price chart '+company['ticker'])
                 bars=repository.bars(company['ticker']); fig=figure(company,bars)
                 if pdf: pdf.savefig(fig)
                 chart=output/f"{company['ticker']}-{company['as_of']}-chart.png"

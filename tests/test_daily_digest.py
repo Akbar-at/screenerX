@@ -1,4 +1,4 @@
-import re
+import json,os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,9 +6,24 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from PIL import Image,PdfParser
 from screenerx.daily_digest import prepare_daily_digest
+from screenerx.engine import file_hash
 
 
 class DailyDigestTests(unittest.TestCase):
+    def test_published_media_is_restored_without_rendering(self):
+        report={'as_of':'2026-10-13','requested_slots':10,'universe_count':1,'top10':[]}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);data=root/'data';data.mkdir()
+            (data/'core-run.json').write_text(json.dumps(report))
+            Image.new('RGB',(100,80),'white').save(data/'daily-overview.png')
+            (data/'daily-report.pdf').write_bytes(b'%PDF-1.4\nverified existing report')
+            names=('core-run.json','daily-overview.png','daily-report.pdf')
+            (data/'manifest.json').write_text(json.dumps({'files':{n:{'sha256':file_hash(data/n)} for n in names}}))
+            with patch.dict(os.environ,{'BOT_DATA':str(data)}),patch('screenerx.daily_digest.render_top') as render:
+                parts=prepare_daily_digest(SimpleNamespace(report=report,run_dir=data),root/'out','2026-10-14')
+                render.assert_not_called();self.assertEqual(len(parts),2)
+                self.assertEqual(Path(parts[1]['path']).read_bytes(),(data/'daily-report.pdf').read_bytes())
+
     def test_two_bubbles_have_short_caption_and_all_chart_pages(self):
         report={'as_of':'2026-10-13','requested_slots':10,'universe_count':957,
                 'top10':[{'ticker':'BMRI','execution_readiness':{'reward_risk_passed':False}}],

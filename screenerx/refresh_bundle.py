@@ -8,10 +8,10 @@ from pathlib import Path
 from .engine import InputError,file_hash
 from .fetch import symbol_for
 
-NAMES=('core-run.json','prices.csv','financials.json','fx.json')
+NAMES=('core-run.json','prices.csv','financials.json','fx.json','daily-overview.png','daily-report.pdf')
 
 
-def build_bundle(run_dir,prices,output,snapshots=None,fx=None):
+def build_bundle(run_dir,prices,output,snapshots=None,fx=None,daily_assets=None):
     output=Path(output); output.mkdir(parents=True,exist_ok=True)
     report_path=Path(run_dir)/'core-run.json'
     report=json.loads(report_path.read_text(encoding='utf-8'))
@@ -34,6 +34,10 @@ def build_bundle(run_dir,prices,output,snapshots=None,fx=None):
     if fx_path and fx_path.exists():
         shutil.copyfile(fx_path,output/'fx.json')
         files['fx.json']={'sha256':file_hash(output/'fx.json'),'bytes':(output/'fx.json').stat().st_size}
+    if daily_assets:
+        for name,part in zip(NAMES[4:],daily_assets):
+            shutil.copyfile(part['path'],output/name)
+            files[name]={'sha256':file_hash(output/name),'bytes':(output/name).stat().st_size}
     version=hashlib.sha256(json.dumps(files,sort_keys=True).encode()).hexdigest()[:16]
     manifest={'version':version,'as_of':report['as_of'],'files':files}
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
