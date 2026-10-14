@@ -19,7 +19,7 @@ No newer observed session means SKIPPED. A source/publishing failure retains the
 
 The Worker now has two Cron expressions:
 
-- `30 11 * * 1-5`: daily refresh at 18:30 Jakarta.
+- `30 0 * * 1-5`: screening starts at 07:30 Jakarta on weekdays, using the latest observed completed session before that morning. Delayed retries retain that morning cutoff.
 - `* * * * *`: Telegram dispatch recovery and refresh heartbeat/retries.
 
 Cloudflare Cron uses UTC. [Official documentation](https://developers.cloudflare.com/workers/configuration/cron-triggers/).

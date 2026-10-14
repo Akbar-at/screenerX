@@ -73,7 +73,7 @@ Use the updated seed `output/bot-input-refresh-ready-v2`, which includes retaine
 
 The cloud flow stores an update in Neon before acknowledging Telegram. Queue transport can duplicate messages; Python claims jobs with leases and skips already delivered outbox parts. A one-minute Cron repairs missing dispatch and expired leases. Telegram 429 schedules a retry; ambiguous sends are recorded UNCERTAIN and are not automatically resent. After eight processing attempts a job is failed for inspection. This avoids promising exactly-once Telegram delivery, which the API cannot guarantee.
 
-Automatic daily market refresh is now implemented: see [daily-refresh.md](daily-refresh.md). The deployed Cloudflare Cron runs at 18:30 Jakarta on weekdays; no Windows task or local timer is used. Financial captures are retained and dated rather than fetched for every company every day. Subscription/watchlist management and executed-position tracking remain outside this release.
+Automatic daily screening is implemented: see [daily-refresh.md](daily-refresh.md). Cloudflare Cron starts it at 07:30 Jakarta on weekdays using the latest completed trading session. IDX foreign activity, profiles and reference ratios are incorporated before publication. Financial captures retain their source dates. Subscription/watchlist management and executed-position tracking remain outside this release.
 
 ## Validation and remaining activation inputs
 

@@ -145,7 +145,7 @@ Unset fees, order size or bid/ask prevent verified selection. Use `--include-pro
 
 ## Configuration
 
-[Automatic daily refresh](docs/daily-refresh.md) uses Cloudflare Cron at 18:30 Jakarta, Neon job state, and atomic R2 publication. It refreshes prices, indicators, valuation/MOS, rankings and charts, and the bot loads the latest published report automatically. The cloud pipeline is deployed and its container health check passed with real data. Annual financial captures retain their actual source dates.
+[Automatic daily screening](docs/daily-refresh.md) starts through Cloudflare Cron at 07:30 Jakarta on weekdays, with Neon job state and atomic R2 publication. It uses the latest observed completed session and incorporates dated IDX foreign activity, profiles and reference ratios alongside prices, indicators, valuation/MOS, rankings and charts. The bot loads the latest published report automatically. Annual financial captures retain their actual source dates.
 
 The [Telegram bot](docs/telegram-bot.md) returns Indonesian descriptive research, candlestick/valuation PNGs, and single-stock or multi-page PDFs. Preview without a token:
 
