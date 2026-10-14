@@ -11,6 +11,7 @@ interface Env {
   AGENT_MAX_ROUNDS: string; AGENT_MAX_TOOL_CALLS: string; AGENT_MAX_TOKENS: string; AGENT_TIMEOUT_SECONDS: string;
   AGENT_REASONING_ENABLED: string;
   BOT_IDX_ENABLED: string;
+  BOT_DAILY_CHAT_ID: string; BOT_DAILY_TOPIC_ID: string;
   BOT_QUEUE: Queue<{update_id: number}>; REPORTS: R2Bucket;
   ENGINE: DurableObjectNamespace<ResearchEngine>;
 }
@@ -36,6 +37,8 @@ export class ResearchEngine extends Container<Env> {
     AGENT_TIMEOUT_SECONDS: this.env.AGENT_TIMEOUT_SECONDS ?? '300',
     AGENT_REASONING_ENABLED: this.env.AGENT_REASONING_ENABLED ?? '',
     BOT_IDX_ENABLED: this.env.BOT_IDX_ENABLED ?? 'false',
+    BOT_DAILY_CHAT_ID: this.env.BOT_DAILY_CHAT_ID ?? '',
+    BOT_DAILY_TOPIC_ID: this.env.BOT_DAILY_TOPIC_ID ?? '',
     BOT_IDX_CACHE: '/tmp/screenerx-idx',
     INPUT_BUNDLE_URL: this.env.INPUT_BUNDLE_URL,
     ARTIFACT_ARCHIVE_URL: this.env.INPUT_BUNDLE_URL.replace(/\/internal\/bundle\/?$/, '/internal/artifacts'),
@@ -111,6 +114,17 @@ export default {
         return Response.json({ok:true,sha256:objectHash,source_sha256:hash});
       }
       return new Response('Method not allowed',{status:405});
+    }
+    if (path === '/internal/daily-delivery' && request.method === 'POST') {
+      if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer '+env.ENGINE_SECRET))
+        return new Response('Forbidden',{status:403});
+      const response=await env.ENGINE.getByName('research-bot-v2').fetch(new Request('http://engine/internal/daily-delivery',request));
+      if (!response.ok) return response;
+      const result=await response.json() as {update_id?:number};
+      if (result.update_id) {
+        try { await env.BOT_QUEUE.send({update_id:result.update_id}); } catch { /* minute recovery resumes the durable job */ }
+      }
+      return Response.json(result,{status:202});
     }
     if ((path === '/internal/engine/health' && request.method === 'GET') ||
         (path === '/internal/idx/check' && request.method === 'POST') ||

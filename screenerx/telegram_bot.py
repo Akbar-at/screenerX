@@ -261,6 +261,26 @@ class ResearchBot:
             return True # acknowledge ordinary group chat without replying
         self.store.accept(update); return True
 
+    def queue_daily_screening(self,request_date=None):
+        from datetime import datetime
+        from .fetch import JAKARTA
+        from .engine import day
+        chat=os.getenv('BOT_DAILY_CHAT_ID','');topic=os.getenv('BOT_DAILY_TOPIC_ID','')
+        if not chat or not topic: return {'status':'DISABLED'}
+        if not self.delivery_enabled: raise ValueError('Telegram delivery is not configured')
+        chat_id=int(chat);topic_id=int(topic)
+        if str(chat_id) not in self.open_groups or topic_id<=0:
+            raise ValueError('Daily delivery requires an authorized open group and positive topic ID')
+        date=day(str(request_date or datetime.now(JAKARTA).date()),'screening request date').isoformat()
+        # Negative IDs occupy a separate namespace from Telegram's real updates.
+        key=f'daily-screening|{date}|{chat_id}|{topic_id}'
+        update_id=-(int(hashlib.sha256(key.encode()).hexdigest()[:13],16)+1)
+        item={'update_id':update_id,'message':{'from':{'id':0},'chat':{'id':chat_id,'type':'supergroup'},
+              'message_thread_id':topic_id,'text':'/top10','screening_request_date':date}}
+        accepted=self.store.accept(item)
+        return {'status':'QUEUED' if accepted else 'ALREADY_QUEUED','update_id':update_id,
+                'chat_id':chat_id,'topic_id':topic_id,'request_date':date}
+
     def configure_access(self,settings):
         if not isinstance(settings,dict) or any(not isinstance(settings.get(k),str) for k in ('users','chats','groups')):
             raise ValueError('Invalid access settings')
@@ -281,6 +301,9 @@ class ResearchBot:
         try:
             try: messages=self.prepare(message_prompt(update['message']))
             except (InputError,ValueError) as exc: messages=[{'kind':'text','text':str(exc)}]
+            if update['message'].get('screening_request_date'):
+                messages.insert(0,{'kind':'text','text':'Daily screening | '+update['message']['screening_request_date']+
+                                 '\nSesi data: '+self.repository.report['as_of']})
             if os.getenv('ARTIFACT_ARCHIVE_URL'):
                 import httpx
                 with httpx.Client(timeout=60) as client:
@@ -329,18 +352,22 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'idx_enabled':os.getenv('BOT_IDX_ENABLED','false').lower()=='true',
                 'screening_schedule':'07:30 Asia/Jakarta, Monday-Friday',
                 'idx_screening_available':bool(bot.repository.report.get('idx_screening')),
+                'daily_delivery_chat':os.getenv('BOT_DAILY_CHAT_ID',''),
+                'daily_delivery_topic':os.getenv('BOT_DAILY_TOPIC_ID',''),
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
-            internal=self.path in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check')
+            internal=self.path in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery')
             secret=self.headers.get('Authorization','') if internal else self.headers.get('X-Telegram-Bot-Api-Secret-Token','')
             expected='Bearer '+engine_secret if internal else webhook_secret
             if not expected or expected=='Bearer ' or not hmac.compare_digest(secret,expected): return self.respond(403,{'error':'Forbidden'})
-            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
+            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
             try:
                 length=int(self.headers.get('Content-Length','0'))
                 if not 0<length<=32768: return self.respond(413,{'error':'Invalid payload size'})
                 payload=json.loads(self.rfile.read(length))
+                if self.path=='/internal/daily-delivery':
+                    return self.respond(202,bot.queue_daily_screening(payload.get('request_date')))
                 if self.path=='/internal/idx/check':
                     from .idx_source import get_idx_source
                     data=get_idx_source().stock_metrics(payload.get('ticker','BMRI'),payload.get('as_of',bot.repository.report['as_of']),
@@ -448,6 +475,7 @@ def main(argv=None):
             state_dir,os.getenv('BOT_FINANCIAL_SNAPSHOTS'),os.getenv('BOT_FX_SNAPSHOT'),
             os.getenv('BOT_LATEST_POINTER','output/daily-refresh/latest.json'),
             on_publish=lambda fresh:setattr(bot,'repository',fresh),
+            on_daily_report=lambda fresh,date:bot.queue_daily_screening(date),
             publish_url=os.getenv('INPUT_BUNDLE_URL'),secret=os.getenv('ENGINE_SECRET'))
     server=None
     if args.mode=='serve':

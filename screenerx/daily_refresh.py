@@ -44,12 +44,13 @@ def publication_checks(previous,fresh,result,session):
 
 class DailyRefresh:
     def __init__(self,repository,store,state_dir='output/daily-refresh',snapshots=None,fx_snapshot=None,
-                 pointer='output/daily-refresh/latest.json',on_publish=None,publish_url=None,secret=None):
+                 pointer='output/daily-refresh/latest.json',on_publish=None,publish_url=None,secret=None,on_daily_report=None):
         self.repository=repository; self.store=store; self.root=Path(state_dir)
         self.root.mkdir(parents=True,exist_ok=True)
         self.snapshots=Path(snapshots) if snapshots else self.discover_snapshots()
         self.fx=Path(fx_snapshot) if fx_snapshot else None
         self.pointer=Path(pointer); self.on_publish=on_publish
+        self.on_daily_report=on_daily_report
         self.publish_url=publish_url; self.secret=secret; self.thread=None; self.lock=threading.Lock()
 
     def discover_snapshots(self):
@@ -98,6 +99,7 @@ class DailyRefresh:
             session,discovery=latest_session(datetime.combine(requested,clock_time(7,30),JAKARTA))
             if session.isoformat()<=self.repository.report['as_of']:
                 result={'status':'SKIPPED','reason':'No newer observed completed session','as_of':session.isoformat()}
+                if self.on_daily_report: result['telegram_delivery']=self.on_daily_report(self.repository,date)
                 self.finish(date,'SKIPPED',result); return result
             if not self.snapshots or not self.snapshots.exists(): raise InputError('Financial snapshots required for daily valuation recalculation')
             folder=self.root/session.isoformat(); folder.mkdir(parents=True,exist_ok=True)
@@ -130,6 +132,7 @@ class DailyRefresh:
             atomic_json(self.pointer,pointer)
             self.repository=fresh; self.fx=fx_path
             if self.on_publish: self.on_publish(fresh)
+            if self.on_daily_report: result['telegram_delivery']=self.on_daily_report(fresh,date)
             result.update(status='PUBLISHED',latest_pointer=str(self.pointer),publication_checks=checks)
             self.finish(date,'DONE',result); return result
         except Exception as exc:

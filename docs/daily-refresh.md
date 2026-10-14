@@ -20,6 +20,10 @@ No newer observed session means SKIPPED. A source/publishing failure retains the
 The Worker now has two Cron expressions:
 
 - `30 0 * * 1-5`: screening starts at 07:30 Jakarta on weekdays, using the latest observed completed session before that morning. Delayed retries retain that morning cutoff.
+
+After successful publication, the top-10 charts and numerical reports are queued to the configured Telegram destination: group `-1003749187440`, **Daily Screening topic 5**. A morning with no new observed trading session sends the latest report with its actual price date. Delivery starts after screening finishes, rather than at exactly 07:30. Failed publication is retried before delivery.
+
+`BOT_DAILY_CHAT_ID` and `BOT_DAILY_TOPIC_ID` configure delivery. The destination must be an authorized open group. A deterministic negative job ID per request day/group/topic keeps scheduled jobs separate from Telegram updates and deduplicates enqueue retries. The existing Neon outbox tracks sent parts and rate-limit retries; minute Cron recovers pending work. The authenticated `/internal/daily-delivery` POST route queues the current report for an initial delivery or recovery; repeating it for the same day does not create another report.
 - `* * * * *`: Telegram dispatch recovery and refresh heartbeat/retries.
 
 Cloudflare Cron uses UTC. [Official documentation](https://developers.cloudflare.com/workers/configuration/cron-triggers/).

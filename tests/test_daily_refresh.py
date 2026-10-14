@@ -110,6 +110,19 @@ class DailyRefreshTests(unittest.TestCase):
             self.assertEqual(self.manager.run(now=NOW)['status'],'ALREADY_HANDLED')
             session.assert_not_called()
 
+    def test_daily_delivery_queued_after_publish_and_after_session_skip(self):
+        self.manager.on_daily_report=MagicMock(return_value={'status':'QUEUED'})
+        a,b,c,d,e=self.providers()
+        with a,b,c,d,e:
+            result=self.manager.run(now=NOW)
+            self.assertEqual(result['telegram_delivery']['status'],'QUEUED')
+            self.manager.on_daily_report.assert_called_once_with(self.manager.repository,'2026-10-13')
+        self.manager.on_daily_report.reset_mock()
+        with patch('screenerx.production.latest_session',return_value=(date(2026,10,13),{})):
+            result=self.manager.run(request_date='2026-10-14',now=NOW.replace(day=14))
+            self.assertEqual(result['status'],'SKIPPED')
+            self.manager.on_daily_report.assert_called_once_with(self.manager.repository,'2026-10-14')
+
     def test_corrupt_latest_pointer_is_not_loaded(self):
         (self.root/'report.json').write_text('bad'); (self.root/'prices.csv').write_text('bad')
         (self.root/'core-run.json').write_text('bad')

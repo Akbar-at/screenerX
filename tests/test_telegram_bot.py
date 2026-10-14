@@ -57,6 +57,27 @@ class TelegramTests(unittest.TestCase):
         self.bot.prepare=lambda text:[{'kind':'text','text':'First'},{'kind':'text','text':'Second'}]
     def tearDown(self): self.temp.cleanup()
 
+    def test_daily_delivery_is_durable_deduplicated_and_targets_topic(self):
+        self.bot.open_groups={'-1003749187440'}
+        self.bot.repository.report={'as_of':'2026-10-13'}
+        with patch.dict('os.environ',{'BOT_DAILY_CHAT_ID':'-1003749187440','BOT_DAILY_TOPIC_ID':'5'}):
+            first=self.bot.queue_daily_screening('2026-10-14')
+            self.assertEqual(first['status'],'QUEUED');self.assertLess(first['update_id'],0)
+            self.assertEqual(self.bot.queue_daily_screening('2026-10-14')['status'],'ALREADY_QUEUED')
+            self.assertEqual(self.bot.process(first['update_id']),'DONE')
+            self.assertEqual(self.client.send.call_count,3)
+            for call in self.client.send.call_args_list:
+                self.assertEqual(call.args[0],-1003749187440)
+                self.assertEqual(call.args[1]['message_thread_id'],5)
+            self.assertEqual(self.bot.process(first['update_id']),'DONE')
+            self.assertEqual(self.client.send.call_count,3)
+            self.assertNotEqual(self.bot.queue_daily_screening('2026-10-15')['update_id'],first['update_id'])
+
+    def test_daily_delivery_rejects_group_outside_allowlist(self):
+        with patch.dict('os.environ',{'BOT_DAILY_CHAT_ID':'-1003749187440','BOT_DAILY_TOPIC_ID':'5'}):
+            with self.assertRaises(ValueError):self.bot.queue_daily_screening('2026-10-14')
+        self.assertEqual(self.store.counts(),{})
+
     def test_private_access_requires_both_user_and_chat(self):
         self.assertTrue(authorized(update(),{'7'},{'-8'}))
         for item in (update(user=9),update(chat=9),{}, {'update_id':True},update(uid='1')):
