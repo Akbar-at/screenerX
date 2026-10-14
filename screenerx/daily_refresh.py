@@ -14,7 +14,7 @@ from .fetch import JAKARTA
 
 def due(now=None):
     now=(now or datetime.now(JAKARTA)).astimezone(JAKARTA)
-    return now.weekday()<5 and (now.hour,now.minute)>=(18,30)
+    return now.weekday()<5 and (now.hour,now.minute)>=(7,30)
 
 
 def atomic_json(path,value):
@@ -94,7 +94,8 @@ class DailyRefresh:
         threading.Thread(target=heartbeat,daemon=True).start()
         checks=None
         try:
-            session,discovery=latest_session(now if requested==now.date() else datetime.combine(requested,clock_time(18,30),JAKARTA))
+            # A delayed/retried morning job must retain its premarket cutoff.
+            session,discovery=latest_session(datetime.combine(requested,clock_time(7,30),JAKARTA))
             if session.isoformat()<=self.repository.report['as_of']:
                 result={'status':'SKIPPED','reason':'No newer observed completed session','as_of':session.isoformat()}
                 self.finish(date,'SKIPPED',result); return result
@@ -117,14 +118,6 @@ class DailyRefresh:
             atomic_json(folder/'publication-checks.json',checks)
             if not checks['passed']:
                 raise InputError('; '.join(checks['reasons'])+'; previous published run retained')
-            if os.getenv('BOT_IDX_ENABLED','false').lower()=='true':
-                # Supplemental source failure never replaces/blocks the healthy core report.
-                from .idx_source import get_idx_source
-                try:
-                    supplement=get_idx_source().stock_metrics('BMRI',session,reference=True)
-                    result['idx_enrichment']={'datasets':supplement['datasets'],'errors':supplement['errors']}
-                except Exception:
-                    result['idx_enrichment']={'status':'UNAVAILABLE'}
             from .reporting import render_top
             render_top(fresh,folder/'images')
             if self.publish_url:
@@ -176,11 +169,11 @@ def main(argv=None):
     parser.add_argument('--state-dir',default='output/daily-refresh'); parser.add_argument('--check',action='store_true')
     args=parser.parse_args(argv)
     if args.check:
-        print(json.dumps({'schedule':'18:30 Asia/Jakarta, Monday-Friday','due_now':due(),
+        print(json.dumps({'schedule':'07:30 Asia/Jakarta, Monday-Friday','due_now':due(),
                           'snapshots_available':Path(args.snapshots).is_dir(),'prices_available':Path(args.prices).is_file()},indent=2))
         return
     if not due():
-        print(json.dumps({'status':'NOT_DUE','schedule':'18:30 Asia/Jakarta, Monday-Friday'}))
+        print(json.dumps({'status':'NOT_DUE','schedule':'07:30 Asia/Jakarta, Monday-Friday'}))
         return
     store=BotStore(Path(args.state_dir)/'state.sqlite',os.getenv('DATABASE_URL'))
     pointer=os.getenv('BOT_LATEST_POINTER',str(Path(args.state_dir)/'latest.json'))

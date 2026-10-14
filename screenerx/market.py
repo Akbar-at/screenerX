@@ -152,6 +152,10 @@ def run(output, asof=None, workers=3, snapshots=None, wsj_pages=None, financial_
     service = build_service(output / 'prices.csv', asof, snapshot_dir=snapshots, wsj_pages=wsj_pages,
                             financial_provider=financial_provider,fx_path=fx_snapshot)
     report = service.screen(tickers)
+    import os
+    if os.getenv('BOT_IDX_ENABLED','false').lower()=='true':
+        from .idx_screening import enrich_report
+        state['idx_enrichment']=enrich_report(report)
     if previous_prices: report['input_files'][str(Path(previous_prices).resolve())]=file_hash(previous_prices)
     report['universe_source'] = state['source']
     report['official_idx_completeness_verified'] = False
@@ -185,8 +189,8 @@ def write_summary(output, state, report_folder):
         f'[Per-ticker coverage]({relative}/coverage.csv). '
         '[Price failures](price-errors.csv). [Source access checks](source-access.json).\n\n'
         f"Financial provider: **{state.get('financial_provider','wsj')}**. Existing financial captures are replayed; missing financials remain unavailable. No company-data fallback. "
-        'The official IDX endpoint is blocked (HTTP 403), so completeness of the broker universe '
-        'against current official listings is unverified. Stale and unavailable symbols remain visible.\n\n'
+        'IDX source coverage and dated foreign activity are recorded in core-run.json when enabled. '
+        'Universe completeness against official listings remains unverified. Stale and unavailable symbols remain visible.\n\n'
         'Broker flow: **ON_HOLD**. Valuations: **UNREVIEWED_ESTIMATES**. '
         'Selections are research results with explicit assumptions; trade readiness is not established.\n'
     )

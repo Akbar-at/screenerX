@@ -35,7 +35,11 @@ class MarketTests(unittest.TestCase):
                  patch('screenerx.market.probe_sources'),patch('screenerx.market.collect_one',side_effect=collected), \
                  patch('screenerx.core_service.completed_cutoff',return_value=asof):
                 broken=run(root/'broken',asof=asof,financial_provider='yfinance')
-                recovered=run(root/'recovered',asof=asof,financial_provider='yfinance',previous_prices=previous,retry_failed=True)
+                with patch.dict('os.environ',{'BOT_IDX_ENABLED':'true'}),patch('screenerx.idx_screening.get_idx_source') as source:
+                    source.return_value.stock_metrics.side_effect=lambda ticker,session,reference: {
+                        'ticker':ticker,'as_of':str(session),'stocks':{'Volume':100},'net_foreign_volume':20,
+                        'datasets':{'stocks':{'status':'AVAILABLE','records':2}},'errors':{},'evidence':{}}
+                    recovered=run(root/'recovered',asof=asof,financial_provider='yfinance',previous_prices=previous,retry_failed=True)
             def company(result):
                 report=json.loads((Path(result['report_path']).parent/'core-run.json').read_text())
                 return next(c for c in report['companies'] if c['ticker']=='BBCA')
@@ -44,6 +48,11 @@ class MarketTests(unittest.TestCase):
             self.assertEqual(company(recovered)['close'],105)
             self.assertEqual(recovered['retained_history']['rows'],1)
             self.assertEqual(recovered['current_price_count'],2)
+            self.assertEqual(recovered['idx_enrichment']['counts']['available'],2)
+            self.assertEqual(company(recovered)['idx_screening']['net_foreign_volume'],20)
+            core=Path(recovered['report_path']).parent
+            self.assertIn('BBCA', (core/'idx-screening.csv').read_text())
+            self.assertEqual(json.loads((core/'tickers/BBCA.json').read_text())['_idx_data']['ticker'],'BBCA')
 
     def test_normalized_history_roundtrips_without_losing_source_quality_flags(self):
         from screenerx.engine import parse_prices,load_prices,write_csv

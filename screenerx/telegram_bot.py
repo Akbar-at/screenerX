@@ -327,6 +327,8 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'agent_enabled':os.getenv('BOT_AGENT_ENABLED','false').lower()=='true',
                 'agent_configured':bool(os.getenv('OPENROUTER_API_KEY') and os.getenv('OPENROUTER_MODEL')),
                 'idx_enabled':os.getenv('BOT_IDX_ENABLED','false').lower()=='true',
+                'screening_schedule':'07:30 Asia/Jakarta, Monday-Friday',
+                'idx_screening_available':bool(bot.repository.report.get('idx_screening')),
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):

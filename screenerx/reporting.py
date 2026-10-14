@@ -15,7 +15,7 @@ GREEN = '#176148'
 INK = '#19352e'
 MUTED = '#61726b'
 RED = '#ba493e'
-RENDERER_VERSION = 'selectable-analysis-idx-v5'
+RENDERER_VERSION = 'screening-idx-v6'
 
 
 def money(value):
@@ -350,6 +350,8 @@ def render_top(repository,output):
     from matplotlib.backends.backend_pdf import PdfPages
     output=Path(output); output.mkdir(parents=True,exist_ok=True)
     report=repository.report; stem='top10-'+report['as_of']; analyses=[]
+    from .idx_reporting import render_idx
+    idx_assets={c['ticker']:render_idx(c['_idx_data'],output/'idx') for c in report['top10'] if c.get('_idx_data')}
     with RENDER_LOCK:
         with PdfPages(output/(stem+'.pdf')) as pdf:
             fig=summary_figure(report); fig.savefig(output/(stem+'.png'),dpi=160); pdf.savefig(fig); plt.close(fig)
@@ -360,9 +362,18 @@ def render_top(repository,output):
                 save_chart(fig,company,bars,chart); plt.close(fig)
                 info=narrative(company)
                 analyses.append({'ticker':company['ticker'],'chart':str(chart),'text':info['text'],'label':info['label']})
+                if company['ticker'] in idx_assets:
+                    asset=idx_assets[company['ticker']]
+                    image=plt.imread(asset['chart']);height,width=image.shape[:2]
+                    panel=plt.figure(figsize=(12,12*height/width),facecolor='white')
+                    axis=panel.add_axes([0,0,1,1]);axis.imshow(image);axis.axis('off');pdf.savefig(panel);plt.close(panel)
+                    analyses.append({'ticker':company['ticker'],'chart':str(asset['chart']),'text':asset['text'],'label':'IDX | broker net ON_HOLD'})
     text=f"Top 10 | {report['as_of']}\n{report['selected_count']} kandidat lolos; {report['unfilled_slots']} slot belum terisi.\n\n"
     text+='\n\n'.join(f"{c['rank']}. {c['ticker']} - skor {c['score']['total']:.1f}\n{recommendation(c)[1]}" for c in report['top10'])
     text+='\n\nValuasi belum direview. Broker flow ON_HOLD. Gunakan /stock KODE untuk kajian lengkap.'
+    if report.get('idx_screening'):
+        counts=report['idx_screening']['counts']
+        text+=f"\n\nIDX sesi {report['as_of']}: {counts['available']} saham memiliki foreign volume; {counts['net_buy']} net buy, {counts['net_sell']} net sell, {counts['flat']} net zero; {counts['unavailable']} belum tersedia. Bukti tambahan tidak mengubah bobot skor."
     (output/(stem+'.txt')).write_text(text,encoding='utf-8')
     return {'png':output/(stem+'.png'),'pdf':output/(stem+'.pdf'),'text':text,'analyses':analyses}
 

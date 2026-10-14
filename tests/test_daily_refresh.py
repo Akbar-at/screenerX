@@ -37,15 +37,23 @@ class DailyRefreshTests(unittest.TestCase):
                 patch('screenerx.fx.fetch_fx',side_effect=InputError('Temporary FX failure')),
                 patch('screenerx.reporting.render_top'),patch('screenerx.reporting.ReportRepository',return_value=MagicMock(report={'as_of':'2026-10-13','coverage_complete_count':100})))
 
-    def test_schedule_is_jakarta_weekdays_after_1830(self):
-        self.assertFalse(due(datetime(2026,10,13,18,29,tzinfo=JAKARTA)))
+    def test_schedule_is_jakarta_weekdays_after_0730(self):
+        self.assertFalse(due(datetime(2026,10,13,7,29,tzinfo=JAKARTA)))
+        self.assertTrue(due(datetime(2026,10,13,7,30,tzinfo=JAKARTA)))
         self.assertTrue(due(NOW))
         self.assertFalse(due(datetime(2026,10,17,19,0,tzinfo=JAKARTA)))
         self.assertTrue(due(datetime(2026,10,13,12,0,tzinfo=__import__('datetime').timezone.utc)))
 
     def test_preclose_run_creates_no_jobs(self):
-        self.assertEqual(self.manager.run(now=NOW.replace(hour=10))['status'],'NOT_DUE')
+        self.assertEqual(self.manager.run(now=NOW.replace(hour=7,minute=29))['status'],'NOT_DUE')
         self.assertEqual(self.store.query('SELECT * FROM sx_refresh_jobs',fetch=True),[])
+
+    def test_delayed_job_discovers_the_morning_completed_session(self):
+        with patch('screenerx.production.latest_session',return_value=(date(2026,10,12),{})) as discovery:
+            self.assertEqual(self.manager.run(now=NOW)['status'],'SKIPPED')
+            discovery.assert_called_once_with(datetime(2026,10,13,7,30,tzinfo=JAKARTA))
+        self.assertTrue(due(datetime(2026,10,13,0,30,tzinfo=__import__('datetime').timezone.utc)))
+        self.assertFalse(due(datetime(2026,10,13,0,29,tzinfo=__import__('datetime').timezone.utc)))
 
     def test_publish_is_atomic_and_same_day_is_not_rerun(self):
         a,b,c,d,e=self.providers()

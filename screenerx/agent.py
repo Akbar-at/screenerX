@@ -132,11 +132,14 @@ class ResearchTools:
             self.completed[key]=result;return result
         if name=='get_shortlist':
             return {'as_of':report['as_of'],'ranking':'combined research shortlist',
-                'candidates':[{'ticker':c['ticker'],'rank':c.get('rank'),'score':(c.get('score') or {}).get('total')} for c in report.get('top10',[])],
+                'candidates':[{'ticker':c['ticker'],'rank':c.get('rank'),'score':(c.get('score') or {}).get('total'),
+                               'idx_screening':c.get('idx_screening')} for c in report.get('top10',[])],
+                'idx_screening':report.get('idx_screening'),
                 'unfilled_slots':report.get('unfilled_slots')}
         if name=='get_coverage':
             return {**{k:report.get(k) for k in ('as_of','universe_count','coverage_complete_count','qualifying_count','selected_count','unfilled_slots')},
-                    'sources':'Yahoo/yfinance; public universe is not certified as all current IDX common equities',
+                    'sources':'Yahoo/yfinance with dated IDX enrichment when enabled; universe is not certified as all current IDX common equities',
+                    'idx_screening':report.get('idx_screening'),
                     'broker_flow':'ON_HOLD'}
         return {'as_of':report['as_of'],'valuation':'UNREVIEWED_ESTIMATES','broker_flow':'ON_HOLD','data':'stored production run'}
 

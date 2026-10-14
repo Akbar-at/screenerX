@@ -230,12 +230,12 @@ export default {
       await dispatch(env);
       if (env.BOT_AUTO_REFRESH !== 'true') return;
       const sql=neon(env.DATABASE_URL); const now=Date.now()/1000;
-      if (event.cron === '30 11 * * 1-5') {
+      if (event.cron === '30 0 * * 1-5') {
         const date=new Date(event.scheduledTime+7*3600*1000).toISOString().slice(0,10);
         await sql`INSERT INTO sx_refresh_jobs(request_date,status) VALUES (${date},'PENDING') ON CONFLICT(request_date) DO NOTHING`;
       }
       const pending=await sql`SELECT request_date FROM sx_refresh_jobs WHERE status IN ('PENDING','RUNNING') OR (status='RETRY' AND next_at<=${now} AND attempts<3) ORDER BY request_date LIMIT 1`;
-      if (event.cron !== '30 11 * * 1-5' && !pending.length) return;
+      if (event.cron !== '30 0 * * 1-5' && !pending.length) return;
       const date=pending.length ? pending[0].request_date : new Date(event.scheduledTime+7*3600*1000).toISOString().slice(0,10);
       const engine=env.ENGINE.getByName('research-bot-v2');
       const response=await engine.fetch(new Request('http://engine/internal/refresh',{

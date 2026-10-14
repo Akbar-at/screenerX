@@ -12,7 +12,8 @@ from .fetch import symbol_for
 
 TOP_FIELDS=['rank','ticker','as_of','coverage_complete','score','fundamental_contribution','technical_contribution',
             'liquidity_contribution','close','ddm','rim','eva','fair_value','current_mos','dispersion',
-            'entry_price','tp1_price','stop_loss_price','net_rr','trade_qualified','broker_flow_status','explanation','warnings']
+            'entry_price','tp1_price','stop_loss_price','net_rr','trade_qualified','broker_flow_status',
+            'idx_foreign_activity','idx_net_foreign_volume','idx_net_share_of_volume','explanation','warnings']
 
 
 def factor_sentence(factor):
@@ -47,6 +48,9 @@ def flat(row):
             'close':row.get('close'),**{key:v.get(key) for key in ('ddm','rim','eva','fair_value','current_mos','dispersion')},
             **{key:plan.get(key) for key in ('entry_price','tp1_price','stop_loss_price','net_rr')},
             'trade_qualified':row['execution_readiness']['trade_qualified'],'broker_flow_status':row['broker_flow_status'],
+            'idx_foreign_activity':row.get('idx_screening',{}).get('foreign_activity'),
+            'idx_net_foreign_volume':row.get('idx_screening',{}).get('net_foreign_volume'),
+            'idx_net_share_of_volume':row.get('idx_screening',{}).get('net_share_of_volume'),
             'explanation':row['explanation'],'warnings':'; '.join(row['warnings'])}
 
 
@@ -63,6 +67,9 @@ def export_report(report,output):
         for r in report['companies']],['ticker','ranking_status','coverage_complete','quality_passed','missing_inputs','quality_failures'])
     for row in report['companies']:
         (output/'tickers'/f'{row["ticker"]}.json').write_text(json.dumps(row,indent=2,allow_nan=False)+'\n',encoding='utf-8')
+    if report.get('idx_screening'):
+        write_csv(output/'idx-screening.csv',[{'ticker':r['ticker'],**r['idx_screening']} for r in report['companies']],
+                  ['ticker','as_of','foreign_activity','net_foreign_volume','net_share_of_volume','unit','score_contribution','broker_net_status'])
     lines=['# Coverage-qualified, explainable research','',f"Price session: {report['as_of']}. Selected {report['selected_count']}/{report['requested_slots']} slots from {report['universe_count']} explicitly supplied companies.",
            '', 'Required research inputs must be complete before ranking. Broker flow remains ON_HOLD; analyst review, quotes and execution verification are separate. This report is not trade qualification.',
            '',f"Unfilled slots: {report['unfilled_slots']}. Missing-input scores are not renormalized; results are never padded.",
@@ -90,6 +97,13 @@ def export_report(report,output):
         if row.get('financial_snapshot_evidence'):
             source=row['financial_snapshot_evidence']
             lines.append(f"- yfinance financial snapshot: `{source['sha256']}`; symbol `{source['symbol']}`.")
+    if report.get('idx_screening'):
+        lines+=['','## Dated IDX screening evidence','',report['idx_screening']['policy'],
+                '', '[All-company foreign activity and coverage](idx-screening.csv). Volumes are shares; daily snapshots are not live quotes.',
+                '', '| Ticker | Foreign activity | Net foreign volume (shares) | Net / session volume |', '|---|---|---|---|']
+        for row in report['top10']:
+            idx=row['idx_screening'];net=idx['net_foreign_volume'];fraction=idx['net_share_of_volume']
+            lines.append(f"| {row['ticker']} | {idx['foreign_activity']} | {net if net is not None else 'UNAVAILABLE'} | {format(fraction,'.1%') if fraction is not None else 'UNAVAILABLE'} |")
     lines+=['','## All-company coverage','', '| Ticker | State | Missing inputs / quality reasons |', '|---|---|---|']
     for row in report['companies']:
         reasons='; '.join(x['reason'] for x in row['missing_inputs']+row['failed_quality_checks']) or 'All required research checks passed'
