@@ -1,6 +1,6 @@
 import { Container } from '@cloudflare/containers';
 import { neon } from '@neondatabase/serverless';
-import { authorized, sameSecret } from './auth';
+import { authorized, addressed, sameSecret } from './auth';
 
 interface Env {
   DATABASE_URL: string; TELEGRAM_BOT_TOKEN: string; TELEGRAM_WEBHOOK_SECRET: string; ENGINE_SECRET: string;
@@ -172,7 +172,7 @@ export default {
     // Once the webhook secret is verified, acknowledge ignored updates without storing or processing them.
     if (!authorized(update, env.TELEGRAM_ALLOWED_USER_IDS, env.TELEGRAM_ALLOWED_CHAT_IDS, env.TELEGRAM_OPEN_GROUP_IDS))
       return Response.json({ok:true,ignored:true});
-    if (['group','supergroup'].includes((update as any).message.chat?.type) && !update.message.text.trimStart().startsWith('/'))
+    if (!addressed(update,env.BOT_AGENT_ENABLED==='true'))
       return Response.json({ok:true,ignored:true});
     const sql = neon(env.DATABASE_URL);
     await sql`INSERT INTO sx_bot_updates(update_id,payload) VALUES (${update.update_id},${JSON.stringify(update)}) ON CONFLICT(update_id) DO NOTHING`;

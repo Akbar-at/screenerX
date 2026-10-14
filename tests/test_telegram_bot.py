@@ -10,7 +10,7 @@ from urllib.error import HTTPError
 
 from screenerx.bot_store import BotStore
 from screenerx.reporting import narrative,recommendation
-from screenerx.telegram_bot import ResearchBot,TelegramClient,DeliveryError,authorized,chunks,handler
+from screenerx.telegram_bot import ResearchBot,TelegramClient,DeliveryError,authorized,chunks,handler,addressed,message_prompt
 
 
 def update(uid=1,text='/help',user=7,chat=-8):
@@ -18,6 +18,37 @@ def update(uid=1,text='/help',user=7,chat=-8):
 
 
 class TelegramTests(unittest.TestCase):
+    def test_group_mentions_and_bot_replies_reach_agent_and_keep_topic(self):
+        self.bot.open_groups={'-100777000123'}
+        with patch.dict('os.environ',{'BOT_AGENT_ENABLED':'true'}):
+            for uid,text,reply in [(1,'@ScreenX_idxbot Cek teknikal PTSN',{}),
+                                   (2,'Jelaskan risiko',{'from':{'id':8659395403,'is_bot':True},'caption':'PTSN | 2026-10-13'})]:
+                item=update(uid=uid,user=99,chat=-100777000123,text=text)
+                item['message'].update(chat={'id':-100777000123,'type':'supergroup'},message_thread_id=2,reply_to_message=reply)
+                self.bot.prepare=MagicMock(return_value=[{'kind':'text','text':'Result'}])
+                self.assertTrue(self.bot.accept(item));self.assertEqual(self.bot.process(uid),'DONE')
+                prompt=self.bot.prepare.call_args.args[0]
+                self.assertNotIn('@ScreenX_idxbot',prompt)
+                if reply: self.assertIn('PTSN | 2026-10-13',prompt)
+                self.assertEqual(json.loads(self.store.parts(uid)[0]['payload'])['message_thread_id'],2)
+
+    def test_other_mentions_replies_and_group_chat_are_ignored(self):
+        with patch.dict('os.environ',{'BOT_AGENT_ENABLED':'true'}):
+            item=update(text='ordinary conversation');item['message']['chat']['type']='supergroup'
+            self.assertFalse(addressed(item))
+            for text in ['@other_bot cek PTSN','@ScreenX_idxbot_other cek PTSN','/help@other_bot']:
+                item['message']['text']=text;self.assertFalse(addressed(item))
+            item['message']['text']='Cek PTSN'
+            for sender in [{'id':99,'is_bot':True},{'id':8659395403,'is_bot':False}]:
+                item['message']['reply_to_message']={'from':sender};self.assertFalse(addressed(item))
+            item['message']['text']='@screenx_idxbot cek PTSN!';self.assertTrue(addressed(item))
+        with patch.dict('os.environ',{'BOT_AGENT_ENABLED':'false'}):self.assertFalse(addressed(item))
+
+    def test_reply_context_cannot_exceed_agent_prompt_limit(self):
+        message={'text':'x'*4096,'reply_to_message':{'from':{'id':8659395403,'is_bot':True},'text':'y'*5000}}
+        self.assertLessEqual(len(message_prompt(message)),4096)
+        message['text']='Explain PTSN';self.assertEqual(len(message_prompt(message)),4096)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.store=BotStore(Path(self.temp.name)/'state.sqlite')
