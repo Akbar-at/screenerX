@@ -345,28 +345,35 @@ def render_stock(company,bars,output):
     return {'png':output/(stem+'.png'),'chart':output/(stem+'-chart.png'),'pdf':output/(stem+'.pdf'),'text':info['text']}
 
 
-def render_top(repository,output):
+def render_top(repository,output,include_pdf=True):
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
+    from contextlib import nullcontext
     output=Path(output); output.mkdir(parents=True,exist_ok=True)
     report=repository.report; stem='top10-'+report['as_of']; analyses=[]
     from .idx_reporting import render_idx
     idx_assets={c['ticker']:render_idx(c['_idx_data'],output/'idx') for c in report['top10'] if c.get('_idx_data')}
     with RENDER_LOCK:
-        with PdfPages(output/(stem+'.pdf')) as pdf:
-            fig=summary_figure(report); fig.savefig(output/(stem+'.png'),dpi=160); pdf.savefig(fig); plt.close(fig)
+        with PdfPages(output/(stem+'.pdf')) if include_pdf else nullcontext() as pdf:
+            fig=summary_figure(report); fig.savefig(output/(stem+'.png'),dpi=160)
+            if pdf: pdf.savefig(fig)
+            plt.close(fig)
             for company in report['top10']:
                 bars=repository.bars(company['ticker']); fig=figure(company,bars)
-                pdf.savefig(fig)
+                if pdf: pdf.savefig(fig)
                 chart=output/f"{company['ticker']}-{company['as_of']}-chart.png"
                 save_chart(fig,company,bars,chart); plt.close(fig)
                 info=narrative(company)
                 analyses.append({'ticker':company['ticker'],'chart':str(chart),'text':info['text'],'label':info['label']})
                 if company['ticker'] in idx_assets:
                     asset=idx_assets[company['ticker']]
-                    image=plt.imread(asset['chart']);height,width=image.shape[:2]
-                    panel=plt.figure(figsize=(12,12*height/width),facecolor='white')
-                    axis=panel.add_axes([0,0,1,1]);axis.imshow(image);axis.axis('off');pdf.savefig(panel);plt.close(panel)
+                    if pdf:
+                        # Keep raster pages as bytes rather than large float RGBA arrays.
+                        from PIL import Image
+                        import numpy as np
+                        with Image.open(asset['chart']) as raster: image=np.asarray(raster.convert('RGB'))
+                        height,width=image.shape[:2];panel=plt.figure(figsize=(12,12*height/width),facecolor='white')
+                        axis=panel.add_axes([0,0,1,1]);axis.imshow(image);axis.axis('off');pdf.savefig(panel);plt.close(panel)
                     analyses.append({'ticker':company['ticker'],'chart':str(asset['chart']),'text':asset['text'],'label':'IDX | broker net ON_HOLD'})
     text=f"Top 10 | {report['as_of']}\n{report['selected_count']} kandidat lolos; {report['unfilled_slots']} slot belum terisi.\n\n"
     text+='\n\n'.join(f"{c['rank']}. {c['ticker']} - skor {c['score']['total']:.1f}\n{recommendation(c)[1]}" for c in report['top10'])

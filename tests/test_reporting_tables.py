@@ -66,3 +66,13 @@ class NumericalReportingTests(unittest.TestCase):
                 self.assertEqual(len([axis for axis in fig.axes if len(axis.tables)]),4)
                 self.assertNotIn('bbox_inches',save.call_args.kwargs)
         plt.close(fig)
+
+    def test_chart_only_top_export_skips_unused_combined_pdf(self):
+        from types import SimpleNamespace
+        from screenerx.reporting import render_top
+        report={'as_of':'2026-10-13','selected_count':0,'universe_count':1,'top10':[],
+                'requested_slots':10,'coverage_complete_count':0,'unfilled_slots':10}
+        with tempfile.TemporaryDirectory() as directory:
+            assets=render_top(SimpleNamespace(report=report),directory,include_pdf=False)
+            self.assertTrue(assets['png'].exists())
+            self.assertFalse(assets['pdf'].exists())

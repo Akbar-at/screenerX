@@ -195,7 +195,7 @@ class ResearchBot:
             assets=render_idx(data,self.output/'idx')
             return [{'kind':'photo','path':str(assets['chart']),'caption':ticker+' | '+data['as_of']+' | IDX; broker net ON_HOLD'}]+messages(assets['text'])
         if command in ('/top','/top10'):
-            assets=render_top(repository,output)
+            assets=render_top(repository,output,include_pdf=False)
             result=[{'kind':'photo','path':str(assets['png']),'caption':f"Top 10 | {repository.report['as_of']} | {repository.report['selected_count']} kandidat lolos"}]+messages(assets['text'])
             for analysis in assets['analyses']:
                 result.append({'kind':'photo','path':analysis['chart'],'caption':analysis['ticker']+' | '+repository.report['as_of']+' | '+analysis['label']})
