@@ -1,6 +1,7 @@
 import { Container } from '@cloudflare/containers';
 import { neon } from '@neondatabase/serverless';
 import { authorized, addressed, sameSecret } from './auth';
+import { validArtifactKey } from './artifacts';
 
 interface Env {
   DATABASE_URL: string; TELEGRAM_BOT_TOKEN: string; TELEGRAM_WEBHOOK_SECRET: string; ENGINE_SECRET: string;
@@ -141,7 +142,7 @@ export default {
       if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))
         return new Response('Forbidden', {status: 403});
       const key = path.substring('/internal/artifacts/'.length);
-      if (!/^[a-f0-9]{16}\/(?:[A-Z0-9]{1,12}|top10)-\d{4}-\d{2}-\d{2}(?:-chart)?\.(?:png|pdf)$/.test(key))
+      if (!validArtifactKey(key))
         return new Response('Invalid artifact key', {status: 400});
       const raw = await request.arrayBuffer();
       if (raw.byteLength > 50 * 1024 * 1024) return new Response('Too large', {status: 413});
