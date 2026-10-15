@@ -12,6 +12,7 @@ interface Env {
   AGENT_MAX_ROUNDS: string; AGENT_MAX_TOOL_CALLS: string; AGENT_MAX_TOKENS: string; AGENT_TIMEOUT_SECONDS: string;
   AGENT_REASONING_ENABLED: string;
   BOT_IDX_ENABLED: string;
+  BOT_MCP_ENABLED: string;
   BOT_DAILY_CHAT_ID: string; BOT_DAILY_TOPIC_ID: string;
   BOT_QUEUE: Queue<{update_id: number}>; REPORTS: R2Bucket;
   ENGINE: DurableObjectNamespace<ResearchEngine>;
@@ -38,6 +39,8 @@ export class ResearchEngine extends Container<Env> {
     AGENT_TIMEOUT_SECONDS: this.env.AGENT_TIMEOUT_SECONDS ?? '300',
     AGENT_REASONING_ENABLED: this.env.AGENT_REASONING_ENABLED ?? '',
     BOT_IDX_ENABLED: this.env.BOT_IDX_ENABLED ?? 'false',
+    BOT_MCP_ENABLED: this.env.BOT_MCP_ENABLED ?? 'false',
+    BOT_MCP_CACHE: '/tmp/screenerx-mcp',
     BOT_DAILY_CHAT_ID: this.env.BOT_DAILY_CHAT_ID ?? '',
     BOT_DAILY_TOPIC_ID: this.env.BOT_DAILY_TOPIC_ID ?? '',
     BOT_IDX_CACHE: '/tmp/screenerx-idx',
@@ -129,6 +132,7 @@ export default {
     }
     if ((path === '/internal/engine/health' && request.method === 'GET') ||
         (path === '/internal/idx/check' && request.method === 'POST') ||
+        (path === '/internal/mcp/check' && request.method === 'POST') ||
         (path === '/internal/daily-preview' && request.method === 'POST') ||
         (path === '/internal/refresh' && request.method === 'POST')) {
       if (!env.ENGINE_SECRET || !sameSecret(request.headers.get('Authorization') ?? '', 'Bearer ' + env.ENGINE_SECRET))

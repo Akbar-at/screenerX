@@ -350,6 +350,7 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'open_group_count':len(bot.open_groups),
                 'agent_enabled':os.getenv('BOT_AGENT_ENABLED','false').lower()=='true',
                 'agent_position_analysis':'structured-average-cost-v1',
+                'idx_mcp_enabled':os.getenv('BOT_MCP_ENABLED','false').lower()=='true',
                 'agent_configured':bool(os.getenv('OPENROUTER_API_KEY') and os.getenv('OPENROUTER_MODEL')),
                 'idx_enabled':os.getenv('BOT_IDX_ENABLED','false').lower()=='true',
                 'screening_schedule':'07:30 Asia/Jakarta, Monday-Friday',
@@ -361,15 +362,20 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'telegram_enabled':bot.delivery_enabled,'refresh_enabled':refresh is not None})
             self.respond(404,{'error':'Unknown route'})
         def do_POST(self):
-            internal=self.path in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery','/internal/daily-preview')
+            internal=self.path in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/mcp/check','/internal/daily-delivery','/internal/daily-preview')
             secret=self.headers.get('Authorization','') if internal else self.headers.get('X-Telegram-Bot-Api-Secret-Token','')
             expected='Bearer '+engine_secret if internal else webhook_secret
             if not expected or expected=='Bearer ' or not hmac.compare_digest(secret,expected): return self.respond(403,{'error':'Forbidden'})
-            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/daily-delivery','/internal/daily-preview','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
+            if self.path not in ('/internal/process','/internal/refresh','/internal/access','/internal/idx/check','/internal/mcp/check','/internal/daily-delivery','/internal/daily-preview','/telegram/webhook'): return self.respond(404,{'error':'Unknown route'})
             try:
                 length=int(self.headers.get('Content-Length','0'))
                 if not 0<length<=32768: return self.respond(413,{'error':'Invalid payload size'})
                 payload=json.loads(self.rfile.read(length))
+                if self.path=='/internal/mcp/check':
+                    if os.getenv('BOT_MCP_ENABLED','false').lower()!='true':return self.respond(503,{'error':'MCP disabled'})
+                    from .idx_mcp import get_idx_mcp
+                    result=get_idx_mcp().call(payload.get('operation'),payload.get('arguments',{}))
+                    return self.respond(200,result)
                 if self.path=='/internal/daily-preview':
                     from .daily_digest import prepare_daily_digest
                     from datetime import datetime

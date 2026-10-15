@@ -18,6 +18,7 @@
     "AGENT_MAX_TOKENS": "8192",
     "AGENT_TIMEOUT_SECONDS": "300",
     "BOT_IDX_ENABLED": "true",
+    "BOT_MCP_ENABLED": "true",
     "BOT_DAILY_CHAT_ID": "-1003749187440",
     "BOT_DAILY_TOPIC_ID": "5"
   },

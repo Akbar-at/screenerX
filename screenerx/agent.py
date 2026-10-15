@@ -45,6 +45,13 @@ snapshot, not a live quote. IDX ratios are reference data and do not replace val
 For IDX foreign activity, bid/offer, issuer profiles or reference ratios, call get_idx_metrics.
 Use reference=false for flow/market data only, true for profiles/ratios. Source fsDate can be
 older than the requested period; do not assert current annual statements from that request.
+When get_market_data is available, use it for latest supplementary quotes, company profiles,
+earnings/news and KSEI shareholder ownership or monthly changes. Call ownership_status to
+discover available release dates before asking for changes. Ownership is holders above 1%,
+not broker flow, and below-1% remainder is not verified regulatory free float.
+MSN statements are supplementary reference data, not automatically validated inputs to our
+DDM/RIM/EVA models. Keep stored analysis dates separate from a newer quote or ownership date.
+Do not silently replace stored model inputs or recompute our indicators from an external MCP analysis.
 Valuations are UNREVIEWED_ESTIMATES, not guaranteed targets. Distinguish available data from a
 qualified entry. No trade execution, external browsing, secret access, or changes to deployment.
 For one or named tickers, use analyze_stock. For the top 10 or a shortlist batch, use
@@ -75,7 +82,17 @@ TOOLS=[tool('analyze_position','Evaluate an existing holding using user-supplied
     tool('get_idx_metrics','Fetch dated IDX foreign volumes, reported turnover, daily bid/offer and exchange-wide broker activity; attach numerical image/report. Optional profile/ratios are reference only.',{
         'ticker':{'type':'string'},'reference':{'type':'boolean'}},('ticker',)),
     tool('get_coverage','Read stored run date, coverage, missing slots and source limitations.'),
-    tool('get_status','Read the stored run date and analysis availability, without credentials or personal IDs.')]
+    tool('get_status','Read the stored run date and analysis availability, without credentials or personal IDs.'),
+    tool('get_market_data','Read supplementary MSN market/company data or monthly KSEI ownership through idx-mcp. Not broker flow or replacement valuation inputs.',{
+        'operation':{'type':'string','enum':['quotes','company','shareholders','ownership_changes','investor_holdings','search_investors','ownership_status']},
+        'ticker':{'type':'string'},'symbols':{'type':'array','items':{'type':'string'},'minItems':1,'maxItems':20},
+        'sections':{'type':'array','items':{'type':'string','enum':['profile','financials','earnings','news']}},
+        'from':{'type':'string','description':'Earlier KSEI release date, YYYY-MM-DD'},'to':{'type':'string'},
+        'entity':{'type':'string'},'query':{'type':'string'},'limit':{'type':'integer','minimum':1,'maximum':50}},('operation',))]
+
+
+def active_tools():
+    return [t for t in TOOLS if t['function']['name']!='get_market_data' or os.getenv('BOT_MCP_ENABLED','false').lower()=='true']
 
 
 class AgentError(Exception): pass
@@ -145,6 +162,10 @@ class ResearchTools:
     def call(self,name,args):
         if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
         if name not in {t['function']['name'] for t in TOOLS}: raise ValueError('Unknown research tool')
+        if name=='get_market_data':
+            if os.getenv('BOT_MCP_ENABLED','false').lower()!='true':raise ValueError('IDX MCP source disabled')
+            from .idx_mcp import get_idx_mcp
+            return get_idx_mcp().call(args.get('operation'),{k:v for k,v in args.items() if k!='operation'})
         allowed=({'ticker','average_price','horizon'} if name=='analyze_position' else {'ticker','modes','output'} if name=='analyze_stock' else
                  {'modes','output','limit'} if name=='analyze_shortlist' else {'ticker','reference'} if name=='get_idx_metrics' else set())
         if set(args)-allowed: raise ValueError('Unexpected tool arguments')
@@ -268,7 +289,7 @@ class OpenRouterAgent:
                 remaining=deadline-time.monotonic()
                 if remaining<=0: raise AgentError('Agent time limit reached')
                 try:
-                    payload={'model':self.model,'messages':messages,'tools':TOOLS,'tool_choice':'auto',
+                    payload={'model':self.model,'messages':messages,'tools':active_tools(),'tool_choice':'auto',
                              'max_tokens':output_limit,'provider':{'require_parameters':True}}
                     if position_requested and isinstance(tools,ResearchTools) and tools.positions:
                         payload['response_format']=position_response_format(tools.positions)
