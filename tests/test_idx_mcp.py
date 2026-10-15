@@ -10,6 +10,17 @@ from screenerx.agent import ResearchTools,active_tools
 
 
 class IDXMCPTests(unittest.TestCase):
+    def test_image_confirmation_allows_cloudflare_metadata_propagation(self):
+        from services.bot.finalize_image import finalize
+        image='registry.cloudflare.com/account/screen@sha256:new';reads=[]
+        def transport(request):
+            if request.method=='GET':reads.append(request)
+            current=image if len(reads)>20 else 'old'
+            return httpx.Response(200,json={'result':{'name':'screen','configuration':{'image':current}}})
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client,patch('services.bot.finalize_image.time.sleep'):
+            self.assertIn('updated',finalize(client,'account','app',image))
+        self.assertEqual(len(reads),21)
+
     def test_mixed_scale_statements_cannot_reach_agent_as_normalized_numbers(self):
         raw={'financials':{'source':'msn','stale':False,'data':{'instrument':{'symbol':'PGEO.JK'},
             'income_statement':{'currency':'USD','end_date':'2026-03-31','report_date':'2026-03-31',

@@ -14,10 +14,10 @@ def finalize(client,account,application,image):
     if app['configuration']['image']==image:return 'Application restart image matches rollout'
     response=client.patch(base,json={'configuration':{'image':image}});response.raise_for_status()
     # PATCH can return the previous configuration while the update is applied.
-    for attempt in range(18):
+    for attempt in range(120):
         response=client.get(base);response.raise_for_status()
         if response.json()['result']['configuration']['image']==image:return 'Application restart image updated to deployed image'
-        print('Waiting for application image update',flush=True)
+        if attempt%6==0:print('Waiting for application image update',flush=True)
         time.sleep(5)
     raise RuntimeError('Container restart image did not update')
 
