@@ -17,9 +17,12 @@ automatically determine exits for existing holdings. Valuations remain unreviewe
 broker net remains on hold.
 
 After position data is available, the model supplies a structured assessment with
-a stance (HOLD, REDUCE, SELL, BUY), condition, reasoning, change conditions, and
-separate adding assessment. The server formats the opening stance and exact cost,
-close, and gross-return figures. An unspecified horizon triggers a follow-up question.
+a stance (HOLD, REDUCE, SELL, BUY), condition, selected evidence codes and change
+conditions. The server renders exact comparisons, cost, close, gross return, and a
+separate adding assessment from tool data. It rejects invented evidence codes and
+BUY when the stored entry has not qualified. An unspecified horizon triggers a follow-up question.
 Average-cost questions that skip the tool or return an invalid assessment get one
 repair attempt within existing limits. Continued failure is reported explicitly.
-This guard does not certify the correctness of every sentence produced by the LLM.
+The LLM chooses the conditional stance and relevant evidence; it does not rewrite
+numbers or comparison directions. A conditional stance is still an interpretation,
+not a guarantee about future prices.

@@ -27,6 +27,8 @@ def position_context(company, average_price, horizon=None):
         'unrealized_gross_return_pct':round((close/average_price-1)*100,4),
         'pnl_basis':'Percentage before fees/slippage; average is user-supplied; quantity not supplied, so no total IDR P&L.',
         'horizon':horizon or 'UNSPECIFIED',
+        'new_entry_qualified':bool(company.get('coverage_complete') and company.get('quality_passed') and
+                                   company.get('execution_readiness',{}).get('reward_risk_passed')),
         'comparisons':{'close_vs_sma20':compare(close,t.get('sma20')),
                        'close_vs_sma60':compare(close,t.get('sma60')),
                        'macd_vs_signal':momentum,'close_vs_fair_value':compare(close,v.get('fair_value'))},

@@ -80,30 +80,58 @@ TOOLS=[tool('analyze_position','Evaluate an existing holding using user-supplied
 
 class AgentError(Exception): pass
 
+POSITION_REASONS=('TREND','MOMENTUM','VALUATION','RETURN','BROKER_GAP')
+POSITION_CONDITIONS={
+    'SUPPORT_HOLDS':'selama support historis bertahan dan risikonya masih sesuai batas Anda.',
+    'RISK_TOLERATED':'selama risiko masih sesuai batas Anda; horizon belum menentukan kepastian arah.',
+    'PROTECT_GAIN':'untuk mengurangi risiko posisi; besaran pengurangan perlu disesuaikan dengan profil Anda.',
+    'THESIS_INVALIDATED':'jika alasan investasi atau batas risiko pribadi sudah gugur.',
+    'ENTRY_CONFIRMED':'hanya setelah setup entry, data, dan kondisi eksekusi dikonfirmasi ulang.'}
+POSITION_CHANGES={
+    'TREND_RECOVERY':'Pemulihan tren dan momentum membuka alasan untuk evaluasi ulang; bukan bukti entry telah terjadi.',
+    'SUPPORT_BREAK':'Support historis yang jebol memerlukan evaluasi pengurangan/exit, bukan otomatis alasan menambah.',
+    'FUNDAMENTAL_REVIEW':'Perubahan kinerja atau hasil review valuasi dapat mengubah penilaian investasi.',
+    'PERSONAL_RISK_LIMIT':'Jika batas risiko pribadi terlewati, evaluasi pengurangan/exit sesuai rencana Anda.'}
+
 
 def position_response_format(positions):
     return {'type':'json_schema','json_schema':{'name':'position_assessment','strict':True,'schema':{
         'type':'object','additionalProperties':False,
         'properties':{'ticker':{'type':'string','enum':list(positions)},
             'stance':{'type':'string','enum':['HOLD','REDUCE','SELL','BUY']},
-            'condition':{'type':'string','description':'Short condition qualifying the opening stance. Do not repeat numerical tables.'},
-            'reasoning':{'type':'string','description':'Brief qualitative explanation using the tool comparison directions. No invented facts or numbers.'},
-            'change_conditions':{'type':'string','description':'What would change the stance; distinguish historical references from an agreed personal stop.'},
-            'adding':{'type':'string','description':'Separately assess adding new capital; poor entry R/R alone does not require selling the holding.'}},
-        'required':['ticker','stance','condition','reasoning','change_conditions','adding']}}}
+            'reason_codes':{'type':'array','items':{'type':'string','enum':list(POSITION_REASONS)},'minItems':1,'maxItems':4},
+            'change_conditions':{'type':'array','items':{'type':'string','enum':list(POSITION_CHANGES)},'minItems':1,'maxItems':2}},
+        'required':['ticker','stance','reason_codes','change_conditions']}}}
 
 
 def render_position_answer(content,positions):
     data=json.loads(content)
     if not isinstance(data,dict) or data.get('ticker') not in positions or data.get('stance') not in ('HOLD','REDUCE','SELL','BUY'):
         raise ValueError('Invalid position assessment')
-    for key in ('condition','reasoning','change_conditions','adding'):
-        if not isinstance(data.get(key),str) or not data[key].strip():raise ValueError('Incomplete position assessment')
     p=positions[data['ticker']]
-    result=(f"{data['stance']} bersyarat — {data['condition']}\n\n"
+    for key,allowed,limit in [('reason_codes',POSITION_REASONS,4),('change_conditions',POSITION_CHANGES,2)]:
+        items=data.get(key)
+        if not isinstance(items,list) or not 1<=len(items)<=limit or any(not isinstance(x,str) or x not in allowed for x in items):
+            raise ValueError('Invalid assessment evidence')
+    if data['stance']=='BUY' and not p['new_entry_qualified']:raise ValueError('Unqualified new entry')
+    support=p['reference_levels_idr'].get('support')
+    condition={'HOLD':'SUPPORT_HOLDS' if support and p['close_idr']>support else 'RISK_TOLERATED',
+               'REDUCE':'PROTECT_GAIN','SELL':'THESIS_INVALIDATED','BUY':'ENTRY_CONFIRMED'}[data['stance']]
+    directions={'ABOVE':'di atas','BELOW':'di bawah','EQUAL':'sama dengan','UNAVAILABLE':'belum dapat dibandingkan dengan'}
+    cmp=p['comparisons']
+    valuation=('Harga berada '+directions[cmp['close_vs_fair_value']]+' estimasi nilai wajar.'+
+        (' Ini premium terhadap estimasi tersebut, bukan undervaluation.' if cmp['close_vs_fair_value']=='ABOVE' else ''))
+    reasons={'TREND':f"Close {directions[cmp['close_vs_sma20']]} SMA20 dan {directions[cmp['close_vs_sma60']]} SMA60.",
+        'MOMENTUM':f"MACD {directions[cmp['macd_vs_signal']]} signal.", 'VALUATION':valuation,
+        'RETURN':f"Posisi menunjukkan return gross {p['unrealized_gross_return_pct']:+.2f}%; keuntungan/kerugian ini belum direalisasi.",
+        'BROKER_GAP':'Broker net per saham belum tersedia; akumulasi/distribusi belum dapat dikonfirmasi.'}
+    adding=('Setup entry tersimpan lolos pemeriksaan awal; tetap perlu konfirmasi harga dan eksekusi sebelum menambah.'
+        if p['new_entry_qualified'] else 'Tunggu setup baru yang lolos pemeriksaan entry; posisi untung atau harga menembus support bukan alasan otomatis untuk averaging down.')
+    result=(f"{data['stance']} bersyarat — {POSITION_CONDITIONS[condition]}\n\n"
         f"{p['ticker']} | sesi {p['as_of']}\nAverage Rp{p['average_price_idr']:,.0f}; close Rp{p['close_idr']:,.0f}; "
         f"return belum terealisasi {p['unrealized_gross_return_pct']:+.2f}% sebelum biaya/slippage. Harga penutupan tersimpan, bukan quote live.\n\n"
-        f"{data['reasoning']}\n\nKondisi perubahan: {data['change_conditions']}\n\nTambah posisi: {data['adding']}\n\n"
+        + ' '.join(reasons[x] for x in dict.fromkeys(data['reason_codes']))+'\n\nKondisi perubahan: '
+        + ' '.join(POSITION_CHANGES[x] for x in dict.fromkeys(data['change_conditions']))+f'\n\nTambah posisi: {adding}\n\n'
         'Level entry/stop laporan adalah referensi rencana baru, bukan stop pribadi yang sudah Anda tetapkan. Valuasi belum direview; broker net ON_HOLD.')
     if p['horizon']=='UNSPECIFIED':result+='\n\nHorizon Anda trading jangka pendek atau investasi jangka panjang, dan berapa penurunan yang masih bisa Anda terima?'
     return result
@@ -281,7 +309,7 @@ class OpenRouterAgent:
                         except (ValueError,TypeError,KeyError):
                             if position_repaired: raise AgentError('Position assessment incomplete; average-cost analysis was not completed')
                             position_repaired=True
-                            messages.append({'role':'system','content':'Your draft was discarded because it did not answer the existing-position question. Call analyze_position using the user-provided average cost if not done. Once the tool completes, return the required position_assessment JSON object: ticker, stance (HOLD/REDUCE/SELL/BUY), condition, reasoning, change_conditions, adding. Be concise and conditional. Do not invent shortlist membership or contradict tool comparisons. Use analyze_stock for supporting research if needed.'})
+                            messages.append({'role':'system','content':'Your draft was discarded because it did not answer the existing-position question. Call analyze_position using the user-provided average cost if not done. Then return the position_assessment JSON schema exactly: ticker, stance, reason_codes, change_conditions codes. Choose from the schema enums. BUY requires new_entry_qualified=true. Use the tool evidence and user horizon to choose the stance, not just the return or new-entry R/R.'})
                             continue
                     return content
                 if calls+len(requested)>self.max_calls: raise AgentError('Agent tool-call limit reached')

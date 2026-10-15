@@ -7,7 +7,7 @@ from unittest.mock import MagicMock,patch
 
 import httpx
 
-from screenerx.agent import OpenRouterAgent,ResearchTools,AgentError,prepare_agent
+from screenerx.agent import OpenRouterAgent,ResearchTools,AgentError,prepare_agent,render_position_answer
 from screenerx.telegram_bot import ResearchBot
 from tests.test_reporting_tables import company
 
@@ -51,13 +51,26 @@ class AgentTests(unittest.TestCase):
             position=json.loads(data['messages'][-1]['content'])
             self.assertEqual(position['average_price_idr'],855)
             self.assertEqual(data['response_format']['json_schema']['schema']['properties']['stance']['enum'],['HOLD','REDUCE','SELL','BUY'])
-            assessment={'ticker':'PGEO','stance':'HOLD','condition':'selama support bertahan','reasoning':'Momentum belum kuat.',
-                'change_conditions':'Tinjau ulang jika support jebol.','adding':'Tunggu konfirmasi.'}
+            assessment={'ticker':'PGEO','stance':'HOLD','condition':'SUPPORT_HOLDS','reason_codes':['TREND','MOMENTUM'],
+                'change_conditions':['SUPPORT_BREAK']}
             return httpx.Response(200,json=response({'content':json.dumps(assessment)}))
         with httpx.Client(transport=httpx.MockTransport(transport)) as client:
             answer=OpenRouterAgent('key','model',client=client).run('PGEO dengan average 855, buy sell or hold?',tools)
         self.assertTrue(answer.startswith('HOLD'));self.assertEqual(len(requests),3)
         self.assertIn('+14.62%',answer);self.assertIn('855',answer);self.assertIn('Horizon Anda',answer)
+
+    def test_position_renderer_rejects_invented_evidence_and_unqualified_buy(self):
+        from screenerx.position import position_context
+        c=company();c.update(ticker='PGEO',close=980);c['technical']['sma20']=1010;c['valuation']['fair_value']=643
+        positions={'PGEO':position_context(c,855)}
+        assessment={'ticker':'PGEO','stance':'HOLD','condition':'RISK_TOLERATED',
+            'reason_codes':['TREND','VALUATION'],'change_conditions':['SUPPORT_BREAK']}
+        text=render_position_answer(json.dumps(assessment),positions)
+        self.assertIn('HOLD bersyarat — selama support historis bertahan',text)
+        self.assertIn('Close di bawah SMA20',text);self.assertIn('bukan undervaluation',text)
+        self.assertIn('bukan alasan otomatis untuk averaging down',text)
+        with self.assertRaises(ValueError):render_position_answer(json.dumps({**assessment,'stance':'BUY'}),positions)
+        with self.assertRaises(ValueError):render_position_answer(json.dumps({**assessment,'reason_codes':['RIM 711']}),positions)
 
     def test_unanswered_position_question_fails_explicitly_after_one_repair(self):
         tools=ResearchTools(MagicMock());requests=[]

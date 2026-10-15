@@ -349,6 +349,7 @@ def handler(bot,engine_secret,webhook_secret,refresh=None):
                 'renderer_version':RENDERER_VERSION,
                 'open_group_count':len(bot.open_groups),
                 'agent_enabled':os.getenv('BOT_AGENT_ENABLED','false').lower()=='true',
+                'agent_position_analysis':'structured-average-cost-v1',
                 'agent_configured':bool(os.getenv('OPENROUTER_API_KEY') and os.getenv('OPENROUTER_MODEL')),
                 'idx_enabled':os.getenv('BOT_IDX_ENABLED','false').lower()=='true',
                 'screening_schedule':'07:30 Asia/Jakarta, Monday-Friday',
