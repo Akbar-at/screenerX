@@ -6,7 +6,7 @@ the MCP Python SDK. The Cloudflare Linux container installs upstream v0.3.1
 MCP registration is needed. `BOT_MCP_ENABLED=false` removes the agent tool and
 disables the private diagnostic endpoint.
 Deployment also verifies that the application's saved restart image matches the
-latest rollout, so a cold start cannot silently revert to the previous image.
+digest pushed by that build, so a cold start cannot silently revert to an old image.
 
 Supported operations: quotes, company (profile/financials/earnings/news),
 shareholders, ownership changes, investor holdings/search, ownership status.

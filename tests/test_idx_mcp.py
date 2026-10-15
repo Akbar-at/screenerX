@@ -30,11 +30,9 @@ class IDXMCPTests(unittest.TestCase):
                 import json
                 self.assertEqual(json.loads(request.content),{'configuration':{'image':image}})
                 return httpx.Response(200,json={'result':{'configuration':{'image':image}}})
-            if request.url.path.endswith('/rollouts'):
-                return httpx.Response(200,json={'result':[{'created_at':'2026-10-15','status':'completed','target_configuration':{'image':image}}]})
-            return httpx.Response(200,json={'result':{'name':'screen','configuration':{'image':'old','memory_mib':1024}}})
+            return httpx.Response(200,json={'result':{'name':'screen','configuration':{'image':image if len(calls)>2 else 'old','memory_mib':1024}}})
         with httpx.Client(transport=httpx.MockTransport(transport)) as client:
-            self.assertIn('updated',finalize(client,'account','app'))
+            self.assertIn('updated',finalize(client,'account','app',image))
         self.assertEqual(sum(r.method=='PATCH' for r in calls),1)
 
     def test_deployment_rejects_foreign_registry_images(self):
@@ -45,7 +43,7 @@ class IDXMCPTests(unittest.TestCase):
                 return httpx.Response(200,json={'result':[{'created_at':'2026-10-15','status':'completed','target_configuration':{'image':'elsewhere/image'}}]})
             return httpx.Response(200,json={'result':{'name':'screen','configuration':{'image':'old'}}})
         with httpx.Client(transport=httpx.MockTransport(transport)) as client:
-            with self.assertRaisesRegex(RuntimeError,'Unexpected rollout image'):finalize(client,'account','app')
+            with self.assertRaisesRegex(RuntimeError,'Unexpected rollout image'):finalize(client,'account','app','elsewhere/image')
 
     def test_only_allowlisted_read_operations_and_bounded_arguments(self):
         self.assertEqual(arguments('quotes',{'symbols':['pgeo','BBCA.JK']})[1]['symbols'],['PGEO','BBCA'])

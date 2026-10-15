@@ -64,6 +64,10 @@ jobs:
         run: printf '%s' "$OPENROUTER_API_KEY" | npx wrangler secret put OPENROUTER_API_KEY --config wrangler.agentic.jsonc
       - name: Build and deploy agentic runtime
         working-directory: workers/bot
-        run: npx wrangler deploy --config wrangler.agentic.jsonc --var "OPENROUTER_MODEL:$OPENROUTER_MODEL" --var "AGENT_REASONING_ENABLED:$AGENT_REASONING_ENABLED"
+        run: |
+          set -o pipefail
+          npx wrangler deploy --config wrangler.agentic.jsonc --var "OPENROUTER_MODEL:$OPENROUTER_MODEL" --var "AGENT_REASONING_ENABLED:$AGENT_REASONING_ENABLED" 2>&1 | tee "$RUNNER_TEMP/screenerx-deploy.log"
       - name: Persist deployed image for container restarts
         run: python services/bot/finalize_image.py
+        env:
+          SCREENERX_DEPLOY_LOG: ${{ runner.temp }}/screenerx-deploy.log

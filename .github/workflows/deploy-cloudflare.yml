@@ -39,7 +39,9 @@ jobs:
         run: npm run check && npm test
         working-directory: workers/bot
       - name: Build image and deploy Worker and Container
-        run: npx wrangler deploy
+        run: |
+          set -o pipefail
+          npx wrangler deploy 2>&1 | tee "$RUNNER_TEMP/screenerx-deploy.log"
         working-directory: workers/bot
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.SCREENERX_CLOUDFLARE_DEPLOY_TOKEN }}
@@ -47,5 +49,6 @@ jobs:
       - name: Persist deployed image for container restarts
         run: python services/bot/finalize_image.py
         env:
+          SCREENERX_DEPLOY_LOG: ${{ runner.temp }}/screenerx-deploy.log
           CLOUDFLARE_API_TOKEN: ${{ secrets.SCREENERX_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: '016d4b7a71aa56787dec81605976ffd2'
