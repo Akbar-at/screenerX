@@ -23,6 +23,23 @@ OWNERSHIP={'shareholders','ownership_changes','investor_holdings','search_invest
 SECTIONS={'profile','financials','earnings','news'}
 
 
+def reference_only_financials(result):
+    """Do not give the LLM mixed-scale raw accounting values as normalized facts."""
+    if not isinstance(result,dict) or not isinstance(result.get('financials'),dict):return result
+    import copy
+    result=copy.deepcopy(result);section=result['financials'];data=section.get('data')
+    if not isinstance(data,dict):return result
+    statements={}
+    for name in ('balance_sheet','income_statement','cash_flow'):
+        value=data.get(name)
+        if isinstance(value,dict):
+            statements[name]={k:value.get(k) for k in ('currency','report_date','end_date')}
+    section['data']={'instrument':data.get('instrument'),'statements':statements,
+        'status':'UNVALIDATED_STATEMENT_UNITS_AND_PERIODS',
+        'reason':'Raw values withheld: upstream mixes monetary scales and does not establish aligned annual periods. Use stored yfinance analysis for numerical fundamentals and valuations.'}
+    return result
+
+
 def arguments(operation,values):
     if operation not in OPERATIONS or not isinstance(values,dict):raise ValueError('Unsupported MCP operation')
     name,allowed=OPERATIONS[operation]
@@ -109,9 +126,11 @@ class IDXMCP:
             if operation in OWNERSHIP:self.sync_ownership()
             try:data=asyncio.run(self._call(name,args))
             except Exception as exc:raise ValueError('IDX MCP data unavailable; stored analysis remains available') from exc
+            if operation=='company':data=reference_only_financials(data)
             return {'provider':'idx-mcp','operation':operation,'result':data,
                 'ownership_refresh':self.sync_status if operation in OWNERSHIP else None,
                 'limitations':['Ownership is monthly holders above 1%, not daily broker flow.',
+                    'Ownership *_bps fields are basis points; divide by 100 when formatting percent.',
                     'Quotes may be delayed; do not describe them as a guaranteed real-time executable price.',
                     'Below-1% ownership remainder is not verified regulatory free float.',
                     'MSN data is supplementary; it does not replace reviewed valuation inputs or genuine OHLCV.',

@@ -65,3 +65,5 @@ jobs:
       - name: Build and deploy agentic runtime
         working-directory: workers/bot
         run: npx wrangler deploy --config wrangler.agentic.jsonc --var "OPENROUTER_MODEL:$OPENROUTER_MODEL" --var "AGENT_REASONING_ENABLED:$AGENT_REASONING_ENABLED"
+      - name: Persist deployed image for container restarts
+        run: python services/bot/finalize_image.py

@@ -49,8 +49,11 @@ When get_market_data is available, use it for latest supplementary quotes, compa
 earnings/news and KSEI shareholder ownership or monthly changes. Call ownership_status to
 discover available release dates before asking for changes. Ownership is holders above 1%,
 not broker flow, and below-1% remainder is not verified regulatory free float.
+Ownership fields ending in _bps are basis points: divide by 100 to express a percent.
 MSN statements are supplementary reference data, not automatically validated inputs to our
 DDM/RIM/EVA models. Keep stored analysis dates separate from a newer quote or ownership date.
+If MCP financial values are withheld for unvalidated scales/periods, use analyze_stock for
+numerical fundamentals. Never infer or reconstruct withheld accounting values.
 Do not silently replace stored model inputs or recompute our indicators from an external MCP analysis.
 Valuations are UNREVIEWED_ESTIMATES, not guaranteed targets. Distinguish available data from a
 qualified entry. No trade execution, external browsing, secret access, or changes to deployment.

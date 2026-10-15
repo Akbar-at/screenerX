@@ -44,3 +44,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.SCREENERX_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: '016d4b7a71aa56787dec81605976ffd2'
+      - name: Persist deployed image for container restarts
+        run: python services/bot/finalize_image.py
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.SCREENERX_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '016d4b7a71aa56787dec81605976ffd2'

@@ -2,13 +2,51 @@ import os
 import sys
 import tempfile
 import unittest
+import httpx
 from pathlib import Path
 from unittest.mock import patch,MagicMock
-from screenerx.idx_mcp import IDXMCP,arguments
+from screenerx.idx_mcp import IDXMCP,arguments,reference_only_financials
 from screenerx.agent import ResearchTools,active_tools
 
 
 class IDXMCPTests(unittest.TestCase):
+    def test_mixed_scale_statements_cannot_reach_agent_as_normalized_numbers(self):
+        raw={'financials':{'source':'msn','stale':False,'data':{'instrument':{'symbol':'PGEO.JK'},
+            'income_statement':{'currency':'USD','end_date':'2026-03-31','report_date':'2026-03-31',
+                'values':{'incomeTaxTotal':19.821,'provisionForIncomeTaxes':19821000}}}}}
+        safe=reference_only_financials(raw)
+        self.assertEqual(safe['financials']['data']['statements']['income_statement']['end_date'],'2026-03-31')
+        self.assertNotIn('incomeTaxTotal',str(safe));self.assertNotIn('19821000',str(safe))
+        self.assertIn('UNVALIDATED',safe['financials']['data']['status'])
+        self.assertEqual(safe['financials']['source'],'msn');self.assertFalse(safe['financials']['stale'])
+        self.assertEqual(raw['financials']['data']['income_statement']['values']['incomeTaxTotal'],19.821)
+
+    def test_deployment_persists_only_the_new_rollout_image(self):
+        from services.bot.finalize_image import finalize
+        calls=[];image='registry.cloudflare.com/account/screen@sha256:new'
+        def transport(request):
+            calls.append(request)
+            if request.method=='PATCH':
+                import json
+                self.assertEqual(json.loads(request.content),{'configuration':{'image':image}})
+                return httpx.Response(200,json={'result':{'configuration':{'image':image}}})
+            if request.url.path.endswith('/rollouts'):
+                return httpx.Response(200,json={'result':[{'created_at':'2026-10-15','status':'completed','target_configuration':{'image':image}}]})
+            return httpx.Response(200,json={'result':{'name':'screen','configuration':{'image':'old','memory_mib':1024}}})
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            self.assertIn('updated',finalize(client,'account','app'))
+        self.assertEqual(sum(r.method=='PATCH' for r in calls),1)
+
+    def test_deployment_rejects_foreign_registry_images(self):
+        from services.bot.finalize_image import finalize
+        def transport(request):
+            self.assertNotEqual(request.method,'PATCH')
+            if request.url.path.endswith('/rollouts'):
+                return httpx.Response(200,json={'result':[{'created_at':'2026-10-15','status':'completed','target_configuration':{'image':'elsewhere/image'}}]})
+            return httpx.Response(200,json={'result':{'name':'screen','configuration':{'image':'old'}}})
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            with self.assertRaisesRegex(RuntimeError,'Unexpected rollout image'):finalize(client,'account','app')
+
     def test_only_allowlisted_read_operations_and_bounded_arguments(self):
         self.assertEqual(arguments('quotes',{'symbols':['pgeo','BBCA.JK']})[1]['symbols'],['PGEO','BBCA'])
         self.assertEqual(arguments('company',{'ticker':'PGEO','sections':['earnings']})[1],{'symbol':'PGEO','sections':['earnings']})
