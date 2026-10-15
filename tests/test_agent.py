@@ -24,6 +24,7 @@ class AgentTests(unittest.TestCase):
         c['technical'].update(sma20=1010,sma60=1029,macd=-13.95,macd_signal=-12.69)
         c['valuation'].update(ddm=695,rim=767,eva=468,fair_value=643)
         bot.repository.company.return_value=c
+        bot.prepare.return_value=[{'kind':'photo','path':'chart.png'}]
         result=ResearchTools(bot).call('analyze_position',{'ticker':'PGEO','average_price':855})
         self.assertAlmostEqual(result['unrealized_gross_return_pct'],14.6199)
         self.assertEqual(result['average_price_idr'],855)
@@ -39,19 +40,24 @@ class AgentTests(unittest.TestCase):
 
     def test_position_question_cannot_silently_fall_back_to_generic_summary(self):
         bot=MagicMock();c=company();c.update(ticker='PGEO',close=980);bot.repository.company.return_value=c
+        bot.prepare.return_value=[{'kind':'photo','path':'chart.png'}]
         tools=ResearchTools(bot);requests=[]
         def transport(request):
             data=json.loads(request.content);requests.append(data)
-            if len(requests)==1:return httpx.Response(200,json=response({'content':'Technical summary only.'}))
+            if len(requests)==1:return httpx.Response(200,json=response({'content':'Average beli 855; here is a generic report.'}))
             if len(requests)==2:
                 self.assertIn('draft was discarded',data['messages'][-1]['content'])
                 return httpx.Response(200,json=response({'tool_calls':[call('analyze_position','{"ticker":"PGEO","average_price":855}')]}))
             position=json.loads(data['messages'][-1]['content'])
             self.assertEqual(position['average_price_idr'],855)
-            return httpx.Response(200,json=response({'content':'HOLD bersyarat; average 855. Berapa horizon Anda?'}))
+            self.assertEqual(data['response_format']['json_schema']['schema']['properties']['stance']['enum'],['HOLD','REDUCE','SELL','BUY'])
+            assessment={'ticker':'PGEO','stance':'HOLD','condition':'selama support bertahan','reasoning':'Momentum belum kuat.',
+                'change_conditions':'Tinjau ulang jika support jebol.','adding':'Tunggu konfirmasi.'}
+            return httpx.Response(200,json=response({'content':json.dumps(assessment)}))
         with httpx.Client(transport=httpx.MockTransport(transport)) as client:
             answer=OpenRouterAgent('key','model',client=client).run('PGEO dengan average 855, buy sell or hold?',tools)
         self.assertTrue(answer.startswith('HOLD'));self.assertEqual(len(requests),3)
+        self.assertIn('+14.62%',answer);self.assertIn('855',answer);self.assertIn('Horizon Anda',answer)
 
     def test_unanswered_position_question_fails_explicitly_after_one_repair(self):
         tools=ResearchTools(MagicMock());requests=[]

@@ -19,9 +19,12 @@ Select technical, fundamental, broker, or combinations according to the request.
 The attached deterministic reports contain authoritative numerical tables and images. Your final
 response should explain findings without copying whole numerical tables or inventing price targets.
 For an existing holding (average/avg/harga beli/modal), call analyze_position with the user's
-average price, plus analyze_stock for the requested evidence. Preserve the user's cost basis.
+average price. It attaches a supporting technical/fundamental chart. Preserve the user's cost basis.
 Start the answer with a clear conditional BUY / HOLD / SELL / REDUCE assessment for the
 EXISTING position, not a generic report summary. Explain whether adding is appropriate separately.
+The very first line MUST begin with HOLD, REDUCE, SELL, or BUY (for example:
+"HOLD bersyarat — jangan tambah posisi dulu."). No introduction before this line.
+Keep a single-position answer within 250 words. Do not copy the full indicator or valuation tables.
 Use the position tool's gross return, dated close and comparisons; these key numbers may be
 repeated. Never invent quantities, total rupiah P&L, a horizon, or the user's risk tolerance.
 If the horizon is missing, give a provisional conditional assessment and ask one concise
@@ -78,6 +81,34 @@ TOOLS=[tool('analyze_position','Evaluate an existing holding using user-supplied
 class AgentError(Exception): pass
 
 
+def position_response_format(positions):
+    return {'type':'json_schema','json_schema':{'name':'position_assessment','strict':True,'schema':{
+        'type':'object','additionalProperties':False,
+        'properties':{'ticker':{'type':'string','enum':list(positions)},
+            'stance':{'type':'string','enum':['HOLD','REDUCE','SELL','BUY']},
+            'condition':{'type':'string','description':'Short condition qualifying the opening stance. Do not repeat numerical tables.'},
+            'reasoning':{'type':'string','description':'Brief qualitative explanation using the tool comparison directions. No invented facts or numbers.'},
+            'change_conditions':{'type':'string','description':'What would change the stance; distinguish historical references from an agreed personal stop.'},
+            'adding':{'type':'string','description':'Separately assess adding new capital; poor entry R/R alone does not require selling the holding.'}},
+        'required':['ticker','stance','condition','reasoning','change_conditions','adding']}}}
+
+
+def render_position_answer(content,positions):
+    data=json.loads(content)
+    if not isinstance(data,dict) or data.get('ticker') not in positions or data.get('stance') not in ('HOLD','REDUCE','SELL','BUY'):
+        raise ValueError('Invalid position assessment')
+    for key in ('condition','reasoning','change_conditions','adding'):
+        if not isinstance(data.get(key),str) or not data[key].strip():raise ValueError('Incomplete position assessment')
+    p=positions[data['ticker']]
+    result=(f"{data['stance']} bersyarat — {data['condition']}\n\n"
+        f"{p['ticker']} | sesi {p['as_of']}\nAverage Rp{p['average_price_idr']:,.0f}; close Rp{p['close_idr']:,.0f}; "
+        f"return belum terealisasi {p['unrealized_gross_return_pct']:+.2f}% sebelum biaya/slippage. Harga penutupan tersimpan, bukan quote live.\n\n"
+        f"{data['reasoning']}\n\nKondisi perubahan: {data['change_conditions']}\n\nTambah posisi: {data['adding']}\n\n"
+        'Level entry/stop laporan adalah referensi rencana baru, bukan stop pribadi yang sudah Anda tetapkan. Valuasi belum direview; broker net ON_HOLD.')
+    if p['horizon']=='UNSPECIFIED':result+='\n\nHorizon Anda trading jangka pendek atau investasi jangka panjang, dan berapa penurunan yang masih bisa Anda terima?'
+    return result
+
+
 class ResearchTools:
     def __init__(self,bot):
         self.bot=copy.copy(bot);self.attachments=[];self.completed={};self.deadline=None;self.max_analyses=12
@@ -97,6 +128,10 @@ class ResearchTools:
             from .position import position_context
             ticker,_=symbol_for(raw)
             result=position_context(self.bot.repository.company(ticker),args.get('average_price'),args.get('horizon'))
+            # One supporting image, with the position answer delivered first.
+            # Reuse an analysis already generated for this ticker in this request.
+            if not any(isinstance(key,tuple) and key[0]==ticker for key in self.completed):
+                self.call('analyze_stock',{'ticker':ticker,'modes':['technical','fundamental'],'output':'chart'})
             self.positions[ticker]=result
             return result
         if name=='get_idx_metrics':
@@ -207,6 +242,8 @@ class OpenRouterAgent:
                 try:
                     payload={'model':self.model,'messages':messages,'tools':TOOLS,'tool_choice':'auto',
                              'max_tokens':output_limit,'provider':{'require_parameters':True}}
+                    if position_requested and isinstance(tools,ResearchTools) and tools.positions:
+                        payload['response_format']=position_response_format(tools.positions)
                     if self.max_price is not None: payload['provider']['max_price']=self.max_price
                     if len(json.dumps(payload,ensure_ascii=False).encode('utf-8'))>100000:
                         raise AgentError('Agent context limit reached; ask for fewer tickers')
@@ -238,11 +275,13 @@ class OpenRouterAgent:
                     content=message.get('content')
                     if not isinstance(content,str) or not content.strip(): raise AgentError('OpenRouter returned no answer')
                     if position_requested and isinstance(tools,ResearchTools):
-                        action=bool(re.search(r'\b(?:buy|beli|hold|tahan|sell|jual|reduce|kurangi)\b',content[:500],re.I))
-                        if not tools.positions or not action:
+                        try:
+                            if not tools.positions:raise ValueError('Position tool required')
+                            return render_position_answer(content,tools.positions)
+                        except (ValueError,TypeError,KeyError):
                             if position_repaired: raise AgentError('Position assessment incomplete; average-cost analysis was not completed')
                             position_repaired=True
-                            messages.append({'role':'system','content':'Your draft was discarded because it did not answer the existing-position question. Call analyze_position using the user-provided average cost if not done. Then start with a conditional BUY/HOLD/SELL/REDUCE stance, explain the cost basis and tool evidence, and ask about horizon if missing. Do not return only the standard entry report.'})
+                            messages.append({'role':'system','content':'Your draft was discarded because it did not answer the existing-position question. Call analyze_position using the user-provided average cost if not done. Once the tool completes, return the required position_assessment JSON object: ticker, stance (HOLD/REDUCE/SELL/BUY), condition, reasoning, change_conditions, adding. Be concise and conditional. Do not invent shortlist membership or contradict tool comparisons. Use analyze_stock for supporting research if needed.'})
                             continue
                     return content
                 if calls+len(requested)>self.max_calls: raise AgentError('Agent tool-call limit reached')
