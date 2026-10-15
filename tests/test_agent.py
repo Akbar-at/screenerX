@@ -18,6 +18,61 @@ def call(name='get_coverage',arguments='{}'):
 
 
 class AgentTests(unittest.TestCase):
+    def test_existing_position_keeps_cost_basis_and_correct_comparisons(self):
+        bot=MagicMock();c=company()
+        c.update(ticker='PGEO',close=980)
+        c['technical'].update(sma20=1010,sma60=1029,macd=-13.95,macd_signal=-12.69)
+        c['valuation'].update(ddm=695,rim=767,eva=468,fair_value=643)
+        bot.repository.company.return_value=c
+        result=ResearchTools(bot).call('analyze_position',{'ticker':'PGEO','average_price':855})
+        self.assertAlmostEqual(result['unrealized_gross_return_pct'],14.6199)
+        self.assertEqual(result['average_price_idr'],855)
+        self.assertEqual(result['comparisons'],{'close_vs_sma20':'BELOW','close_vs_sma60':'BELOW',
+            'macd_vs_signal':'BELOW','close_vs_fair_value':'ABOVE'})
+        self.assertEqual(result['valuation_models_idr']['rim'],767)
+        self.assertEqual(result['horizon'],'UNSPECIFIED')
+        self.assertIn('not an agreed exit',' '.join(result['limitations']))
+        for value in [True,0,-1,float('nan'),float('inf'),'855',None]:
+            with self.assertRaises(ValueError):ResearchTools(bot).call('analyze_position',{'ticker':'PGEO','average_price':value})
+        c['close']=None
+        with self.assertRaises(ValueError):ResearchTools(bot).call('analyze_position',{'ticker':'PGEO','average_price':855})
+
+    def test_position_question_cannot_silently_fall_back_to_generic_summary(self):
+        bot=MagicMock();c=company();c.update(ticker='PGEO',close=980);bot.repository.company.return_value=c
+        tools=ResearchTools(bot);requests=[]
+        def transport(request):
+            data=json.loads(request.content);requests.append(data)
+            if len(requests)==1:return httpx.Response(200,json=response({'content':'Technical summary only.'}))
+            if len(requests)==2:
+                self.assertIn('draft was discarded',data['messages'][-1]['content'])
+                return httpx.Response(200,json=response({'tool_calls':[call('analyze_position','{"ticker":"PGEO","average_price":855}')]}))
+            position=json.loads(data['messages'][-1]['content'])
+            self.assertEqual(position['average_price_idr'],855)
+            return httpx.Response(200,json=response({'content':'HOLD bersyarat; average 855. Berapa horizon Anda?'}))
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            answer=OpenRouterAgent('key','model',client=client).run('PGEO dengan average 855, buy sell or hold?',tools)
+        self.assertTrue(answer.startswith('HOLD'));self.assertEqual(len(requests),3)
+
+    def test_unanswered_position_question_fails_explicitly_after_one_repair(self):
+        tools=ResearchTools(MagicMock());requests=[]
+        def transport(request):
+            requests.append(request);return httpx.Response(200,json=response({'content':'A generic report.'}))
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            with self.assertRaisesRegex(AgentError,'Position assessment incomplete'):
+                OpenRouterAgent('key','model',client=client).run('PGEO average 855 hold?',tools)
+        self.assertEqual(len(requests),2)
+
+    def test_position_answer_arrives_before_supporting_reports(self):
+        def run(prompt,tools):
+            tools.positions['PGEO']={'average_price_idr':855}
+            tools.attachments.extend([{'kind':'photo','path':'chart.png'},{'kind':'text','text':'Technical tables'}])
+            return 'HOLD bersyarat; average 855. Horizon Anda?'
+        with patch('screenerx.agent.OpenRouterAgent.from_env') as build:
+            build.return_value.run.side_effect=run;build.return_value.trace=[]
+            parts=prepare_agent(MagicMock(),'PGEO average 855 hold?')
+        self.assertTrue(parts[0]['text'].startswith('HOLD'));self.assertEqual(parts[1]['kind'],'photo')
+        self.assertIn('agent_diagnostics',parts[0]);self.assertNotIn('agent_diagnostics',parts[-1])
+
     def test_idx_tool_attaches_native_dashboard_and_preserves_broker_scope(self):
         bot=MagicMock();bot.repository.report={'as_of':'2026-10-13'}
         bot.idx_metrics.return_value={'ticker':'BMRI','as_of':'2026-10-13','datasets':{'stocks':{'status':'UNAVAILABLE'}},'errors':{'stocks':'Temporary source failure'}}
@@ -229,5 +284,7 @@ class AgentTests(unittest.TestCase):
             with patch.dict(os.environ,{'BOT_AGENT_ENABLED':'true'}),patch('screenerx.agent.prepare_agent',return_value=[{'kind':'text','text':'agent'}]) as run:
                 self.assertEqual(bot.prepare('/ask@ScreenX_idxbot Compare BBCA BMRI')[0]['text'],'agent')
                 run.assert_called_once_with(bot,'Compare BBCA BMRI');run.reset_mock()
+                bot.prepare('/ask@ScreenX_idxbot PGEO dengan average 855, buy or sell or hold')
+                run.assert_called_once_with(bot,'PGEO dengan average 855, buy or sell or hold');run.reset_mock()
                 bot.prepare('/help');run.assert_not_called()
                 bot.prepare('Explain dividends');run.assert_called_once_with(bot,'Explain dividends')
